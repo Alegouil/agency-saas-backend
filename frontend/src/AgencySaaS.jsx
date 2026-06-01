@@ -722,9 +722,12 @@ function FeedMsg({ m, expanded, setExpanded, onValidate, onContinueMission, onAc
   }
   if (m.type === "error") {
     return (
-      <div className="pop" style={{ display: "flex", gap: 9, alignItems: "flex-end", marginBottom: 16 }}>
-        <Character id={m.agentId} size={36} />
-        <div style={{ background: "#FFF1EE", border: "1px solid #FAD4CB", borderRadius: "16px 16px 16px 5px", padding: "11px 14px", fontSize: 13, color: "#E0654E", fontFamily: "Nunito, sans-serif" }}>Oups : {m.content}</div>
+      <div className="pop" style={{ marginBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 6 }}>
+          <Character id={m.agentId} size={32} />
+          <div style={{ fontSize: 13.5, fontWeight: 700, color: AGENTS[m.agentId]?.color, fontFamily: "Fredoka, sans-serif" }}>{AGENTS[m.agentId]?.name}</div>
+        </div>
+        <div style={{ background: "#FFF1EE", border: "1px solid #FAD4CB", borderRadius: 18, padding: "11px 14px", fontSize: 13, color: "#E0654E", fontFamily: "Nunito, sans-serif" }}>Oups : {m.content}</div>
       </div>
     );
   }
@@ -738,17 +741,18 @@ function FeedMsg({ m, expanded, setExpanded, onValidate, onContinueMission, onAc
     );
   }
   const a = AGENTS[m.agentId];
-  const suggestedActions = buildSuggestedActions(m);
   return (
-    <div className="pop" style={{ display: "flex", gap: 9, alignItems: "flex-end", marginBottom: 16, marginLeft: Math.min(m.depth || 0, 2) * 12 }}>
-      <Character id={m.agentId} size={36} badge />
-      <div style={{ maxWidth: "84%" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 5, marginLeft: 3, flexWrap: "wrap" }}>
+    <div className="pop" style={{ marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 6, flexWrap: "wrap" }}>
+        <Character id={m.agentId} size={32} badge />
+        <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
           <span style={{ fontSize: 13.5, fontWeight: 700, color: a.color, fontFamily: "Fredoka, sans-serif" }}>{a.name}</span>
           <span style={{ fontSize: 11, color: "#C3B8A6", fontFamily: "Nunito, sans-serif" }}>{a.role}</span>
           {m.flags?.includes("VALIDATION_REQUIRED") && <span style={{ fontSize: 10, color: "#E8A33D", background: "#FCF3E1", border: "1px solid #F2DDAE", borderRadius: 20, padding: "2px 9px", fontFamily: "Nunito, sans-serif", fontWeight: 700 }}>À valider</span>}
           {m.flags?.includes("BLOCKER") && <span style={{ fontSize: 10, color: "#E0654E", background: "#FFF1EE", border: "1px solid #FAD4CB", borderRadius: 20, padding: "2px 9px", fontFamily: "Nunito, sans-serif", fontWeight: 700 }}>Bloqué</span>}
         </div>
+      </div>
+      <div>
         <div style={{ background: "#fff", border: "1px solid #F0E8DB", borderRadius: "16px 16px 16px 5px", padding: "12px 15px", fontSize: 14, lineHeight: 1.6, color: "#4A4658", fontFamily: "Nunito, sans-serif", whiteSpace: "pre-wrap", boxShadow: "0 3px 14px rgba(120,90,50,0.04)" }}>
           {compact ? `${(m.content || "").slice(0, 220)}${(m.content || "").length > 220 ? "…" : ""}` : m.content}
         </div>
@@ -778,16 +782,11 @@ function FeedMsg({ m, expanded, setExpanded, onValidate, onContinueMission, onAc
             {expanded === m.id && <div style={{ marginTop: 9, fontSize: 13.5, lineHeight: 1.6, color: "#5A5568", fontFamily: "Nunito, sans-serif", whiteSpace: "pre-wrap" }}>{m.deliverable}</div>}
           </button>
         )}
-        {!compact && (m.type === "response" || m.type === "command") && m.phase === "final_validation" && (
+        {!compact && m.type === "response" && m.phase === "final_validation" && (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
             <button onClick={() => onContinueMission(m)} style={{ padding: "8px 12px", borderRadius: 20, border: "1px solid #F0E8DB", background: "#fff", color: "#7A7488", fontSize: 12.5, fontFamily: "Nunito, sans-serif", fontWeight: 700, cursor: "pointer" }}>
-              Continuer cette mission
+              Retour sur le livrable
             </button>
-            {suggestedActions.map((action) => (
-              <button key={action.label} onClick={() => onAction(m, action)} style={{ padding: "8px 12px", borderRadius: 20, border: `1px solid ${a.color}55`, background: `${a.color}10`, color: a.color, fontSize: 12.5, fontFamily: "Nunito, sans-serif", fontWeight: 700, cursor: "pointer" }}>
-                {action.label}
-              </button>
-            ))}
           </div>
         )}
       </div>
@@ -810,31 +809,92 @@ function SectionCard({ icon: Icon, color, title, hint, children }) {
   );
 }
 
-function MissionListItem({ mission, selected, onOpen }) {
+function MissionListItem({ mission, selected, onOpen, onAction }) {
   const agent = AGENTS[mission.target];
+  const actionWidth = mission.archived ? 184 : 112;
+  const [offset, setOffset] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const startXRef = useRef(0);
+  const startOffsetRef = useRef(0);
+  const movedRef = useRef(false);
+
+  const handleTouchStart = (event) => {
+    startXRef.current = event.touches[0].clientX;
+    startOffsetRef.current = offset;
+    movedRef.current = false;
+    setDragging(true);
+  };
+
+  const handleTouchMove = (event) => {
+    if (!dragging) return;
+    const delta = event.touches[0].clientX - startXRef.current;
+    if (Math.abs(delta) > 6) movedRef.current = true;
+    const next = Math.max(-actionWidth, Math.min(0, startOffsetRef.current + delta));
+    setOffset(next);
+  };
+
+  const handleTouchEnd = () => {
+    if (!dragging) return;
+    setDragging(false);
+    setOffset(Math.abs(offset) > actionWidth * 0.35 ? -actionWidth : 0);
+  };
+
+  const triggerAction = (action) => {
+    setOffset(0);
+    onAction(mission.id, action);
+  };
+
   return (
-    <button onClick={() => onOpen(mission.id)} style={{ ...ST.card, width: "100%", padding: 14, marginBottom: 10, textAlign: "left", cursor: "pointer" }}>
-      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-        <Character id={mission.target} size={44} badge />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-            <span style={{ fontSize: 14.5, fontWeight: 700, color: "#3D3A4E", fontFamily: "Fredoka, sans-serif", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{mission.title}</span>
-            {selected && <span style={{ fontSize: 10.5, color: "#F2785C", background: "#FFF1EC", borderRadius: 20, padding: "2px 7px", fontFamily: "Nunito, sans-serif", fontWeight: 700 }}>Ouverte</span>}
-          </div>
-          <div style={{ fontSize: 11.5, color: agent.color, fontFamily: "Nunito, sans-serif", fontWeight: 700, marginBottom: 4 }}>{agent.name} · {agent.role}</div>
-          <div style={{ fontSize: 12, color: "#9A93A8", fontFamily: "Nunito, sans-serif", lineHeight: 1.4 }}>
-            {mission.finalResponse ? "Livrable final prêt" : "Travail en cours"} · {new Date(mission.updatedAt).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+    <div style={{ position: "relative", marginBottom: 10, overflow: "hidden", borderRadius: 20 }}>
+      <div style={{ position: "absolute", inset: 0, display: "flex", justifyContent: "flex-end", alignItems: "stretch" }}>
+        {mission.archived ? (
+          <>
+            <button onClick={() => triggerAction("restore")} style={{ width: 92, border: "none", background: "#F4F1EB", color: "#7A7488", fontSize: 12.5, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
+              Désarchiver
+            </button>
+            <button onClick={() => triggerAction("delete")} style={{ width: 92, border: "none", background: "#E0654E", color: "#fff", fontSize: 12.5, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
+              Supprimer
+            </button>
+          </>
+        ) : (
+          <button onClick={() => mission.hasFinalDeliverable && triggerAction("archive")} disabled={!mission.hasFinalDeliverable} style={{ width: 112, border: "none", background: mission.hasFinalDeliverable ? "#42B76B" : "#D8CDBD", color: "#fff", fontSize: 12.5, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: mission.hasFinalDeliverable ? "pointer" : "not-allowed" }}>
+            Terminer
+          </button>
+        )}
+      </div>
+      <button
+        onClick={() => {
+          if (Math.abs(offset) > 12 || movedRef.current) {
+            setOffset(0);
+            return;
+          }
+          onOpen(mission.id);
+        }}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        style={{ ...ST.card, width: "100%", padding: 14, textAlign: "left", cursor: "pointer", position: "relative", zIndex: 1, transform: `translateX(${offset}px)`, transition: dragging ? "none" : "transform 0.22s ease" }}
+      >
+        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <Character id={mission.target} size={44} badge />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+              <span style={{ fontSize: 14.5, fontWeight: 700, color: "#3D3A4E", fontFamily: "Fredoka, sans-serif", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{mission.title}</span>
+              {selected && <span style={{ fontSize: 10.5, color: "#F2785C", background: "#FFF1EC", borderRadius: 20, padding: "2px 7px", fontFamily: "Nunito, sans-serif", fontWeight: 700 }}>Ouverte</span>}
+            </div>
+            <div style={{ fontSize: 11.5, color: agent.color, fontFamily: "Nunito, sans-serif", fontWeight: 700, marginBottom: 4 }}>{agent.name} · {agent.role}</div>
+            <div style={{ fontSize: 12, color: "#9A93A8", fontFamily: "Nunito, sans-serif", lineHeight: 1.4 }}>
+              {mission.finalResponse ? "Livrable final prêt" : "Travail en cours"} · {new Date(mission.updatedAt).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+            </div>
           </div>
         </div>
-      </div>
-    </button>
+      </button>
+    </div>
   );
 }
 
 function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueMission, onAction, onArchive, onBack }) {
   const finalResponse = mission.finalResponse || mission.latestResponse;
-  const processMessages = mission.messages.filter((m) => m.type !== "command" && m.id !== finalResponse?.id && m.type !== "mission_archived");
-  const [showProcess, setShowProcess] = useState(false);
   const [openRelayId, setOpenRelayId] = useState(null);
   const relays = mission.messages
     .filter((m) => m.type === "delegation")
@@ -873,10 +933,12 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {relays.map(({ relay, receiverResponse }) => (
                   <div key={relay.id}>
-                    <button onClick={() => setOpenRelayId(openRelayId === relay.id ? null : relay.id)} style={{ ...ST.card, width: "100%", padding: "10px 12px", textAlign: "left", cursor: "pointer" }}>
+                    <button onClick={() => setOpenRelayId(openRelayId === relay.id ? null : relay.id)} style={{ width: "100%", padding: "6px 2px", textAlign: "left", cursor: "pointer", border: "none", background: "transparent" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <Character id={relay.from} size={26} />
                         <span style={{ fontSize: 12.5, color: AGENTS[relay.from]?.color || "#7A7488", fontFamily: "Nunito, sans-serif", fontWeight: 800 }}>{AGENTS[relay.from]?.name}</span>
                         <ChevronRight size={14} color="#C3B8A6" />
+                        <Character id={relay.to} size={26} />
                         <span style={{ fontSize: 12.5, color: AGENTS[relay.to]?.color || "#7A7488", fontFamily: "Nunito, sans-serif", fontWeight: 800 }}>{AGENTS[relay.to]?.name}</span>
                       </div>
                     </button>
@@ -920,16 +982,6 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
           </button>
         )}
       </div>
-
-      <button onClick={() => setShowProcess((p) => !p)} style={{ width: "100%", marginBottom: 12, padding: "12px 14px", borderRadius: 14, border: "1px solid #F0E8DB", background: "#fff", color: "#7A7488", fontSize: 13, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer", textAlign: "left" }}>
-        {showProcess ? "Masquer" : "Voir"} le process interne ({processMessages.length})
-      </button>
-
-      {showProcess && (
-        <div>
-          {processMessages.map((m) => <FeedMsg key={m.id} m={m} compact expanded={expanded} setExpanded={setExpanded} onValidate={onValidate} onContinueMission={onContinueMission} onAction={onAction} />)}
-        </div>
-      )}
     </div>
   );
 }
@@ -981,7 +1033,7 @@ function MissionsScreen({ messages, expanded, setExpanded, onQuick, onValidate, 
           )}
         </div>
       ) : (
-        displayed.map((mission) => <MissionListItem key={mission.id} mission={mission} onOpen={setSelectedMissionId} />)
+        displayed.map((mission) => <MissionListItem key={mission.id} mission={mission} onOpen={setSelectedMissionId} onAction={onArchiveMission} />)
       )}
     </div>
   );
@@ -1429,7 +1481,8 @@ export default function AgencySaaS() {
     if (!command.trim() || processing) return;
     const cmd = command.trim();
     const missionId = selectedMissionId || `mission-${Date.now()}`;
-    const leadAgentId = routeObjectiveToLead(cmd);
+    const existingMission = selectedMissionId ? buildMissionList(messages).find((m) => m.id === selectedMissionId) : null;
+    const leadAgentId = existingMission?.target || routeObjectiveToLead(cmd);
     const plan = buildExecutionPlan(leadAgentId, cmd);
     setCommand(""); setSheet(false); setTab("missions"); setProcessing(true);
     setSelectedMissionId(missionId);
@@ -1445,7 +1498,7 @@ export default function AgencySaaS() {
       await runAgent(step.agentId, step.task, i, "", missionId, step.kind);
     }
     setProcessing(false);
-  }, [command, processing, addMsg, addEvent, runAgent, selectedMissionId]);
+  }, [command, processing, addMsg, addEvent, runAgent, selectedMissionId, messages]);
 
   const handleContinueMission = useCallback((message) => {
     const missionId = message.missionId || null;
@@ -1471,6 +1524,7 @@ export default function AgencySaaS() {
     } else if (action === "restore") {
       addMsg({ type: "mission_restored", missionId, content: "Mission désarchivée" });
     } else {
+      if (typeof window !== "undefined" && !window.confirm("Terminer et archiver cette mission ?")) return;
       addMsg({ type: "mission_archived", missionId, content: "Mission archivée" });
     }
     setSelectedMissionId(null);
