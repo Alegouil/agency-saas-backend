@@ -379,7 +379,7 @@ async function callAgent(agentId, task, context, brief) {
 
 const ST = {
   card: { background: "#fff", borderRadius: 20, border: "1px solid #F0E8DB", boxShadow: "0 4px 20px rgba(120,90,50,0.05)" },
-  input: { width: "100%", background: "#FBF6EE", border: "1.5px solid #EFE7DA", borderRadius: 12, padding: "11px 13px", fontFamily: "Nunito, sans-serif", fontSize: 14, color: "#3D3A4E", lineHeight: 1.5 },
+  input: { width: "100%", background: "#FBF6EE", border: "1.5px solid #EFE7DA", borderRadius: 12, padding: "11px 13px", fontFamily: "Nunito, sans-serif", fontSize: 16, color: "#3D3A4E", lineHeight: 1.5 },
   label: { fontSize: 12, fontWeight: 700, color: "#A89A86", fontFamily: "Nunito, sans-serif", marginBottom: 6, display: "block" },
 };
 
@@ -479,7 +479,7 @@ function OffersField({ label, items = [], onChange, color = "#4DBE88" }) {
               <input value={o.price || ""} onChange={(e) => upd(i, "price", e.target.value)} placeholder="€" style={{ ...ST.input, background: "#fff", flex: 1 }} />
             </div>
             <div style={{ display: "flex", gap: 8 }}>
-              <input value={o.desc || ""} onChange={(e) => upd(i, "desc", e.target.value)} placeholder="Description" style={{ ...ST.input, background: "#fff", flex: 1, fontSize: 13 }} />
+              <input value={o.desc || ""} onChange={(e) => upd(i, "desc", e.target.value)} placeholder="Description" style={{ ...ST.input, background: "#fff", flex: 1 }} />
               <button onClick={() => onChange(items.filter((_, j) => j !== i))} style={{ width: 40, borderRadius: 12, border: "1px solid #F0DDD8", background: "#FFF1EE", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><Trash2 size={16} color="#E0654E" /></button>
             </div>
           </div>
@@ -842,7 +842,7 @@ function ConfigScreen({ config, updateCompany, updateMetier, saved, decisions })
                     <input value={p.name} onChange={(e) => updateCompany("poles", c.poles.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} placeholder="Nom" style={{ ...ST.input, background: "#fff", fontWeight: 700, flex: 1 }} />
                     <button onClick={() => updateCompany("poles", c.poles.filter((_, j) => j !== i))} style={{ width: 40, borderRadius: 12, border: "1px solid #F0DDD8", background: "#FFF1EE", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><Trash2 size={16} color="#E0654E" /></button>
                   </div>
-                  <input value={p.desc} onChange={(e) => updateCompany("poles", c.poles.map((x, j) => j === i ? { ...x, desc: e.target.value } : x))} placeholder="Description" style={{ ...ST.input, background: "#fff", fontSize: 13 }} />
+                  <input value={p.desc} onChange={(e) => updateCompany("poles", c.poles.map((x, j) => j === i ? { ...x, desc: e.target.value } : x))} placeholder="Description" style={{ ...ST.input, background: "#fff" }} />
                 </div>
               ))}
             </div>
@@ -992,7 +992,7 @@ function MissionSheet({ target, setTarget, command, setCommand, onSend, onClose 
         </div>
 
         <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
-          <textarea value={command} onChange={(e) => setCommand(e.target.value)} placeholder="Votre mission…" rows={3} style={{ flex: 1, background: "#fff", border: "1.5px solid #EFE7DA", borderRadius: 16, padding: "13px 15px", color: "#3D3A4E", fontSize: 14.5, fontFamily: "Nunito, sans-serif", lineHeight: 1.5 }} />
+          <textarea value={command} onChange={(e) => setCommand(e.target.value)} placeholder="Votre mission…" rows={3} style={{ flex: 1, background: "#fff", border: "1.5px solid #EFE7DA", borderRadius: 16, padding: "13px 15px", color: "#3D3A4E", fontSize: 16, fontFamily: "Nunito, sans-serif", lineHeight: 1.5 }} />
           <button onClick={onSend} disabled={!command.trim()} style={{ width: 54, height: 54, borderRadius: 16, border: "none", flexShrink: 0, cursor: command.trim() ? "pointer" : "not-allowed", background: command.trim() ? "linear-gradient(135deg, #FF9466, #F2785C)" : "#EDE4D5", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: command.trim() ? "0 6px 16px rgba(242,120,92,0.35)" : "none", WebkitTapHighlightColor: "transparent" }}>
             <ArrowUp size={23} color={command.trim() ? "#fff" : "#C3B8A6"} strokeWidth={2.6} />
           </button>
