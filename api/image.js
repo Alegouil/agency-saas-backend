@@ -21,6 +21,8 @@ export default async function handler(req, res) {
   const apiKey = process.env.OPENAI_API_KEY;
   const model = process.env.OPENAI_IMAGE_MODEL || "gpt-image-2";
   const prompt = String(req.body?.prompt || "").trim();
+  const requestedCount = Number(req.body?.count || 1);
+  const count = Number.isFinite(requestedCount) ? Math.max(1, Math.min(10, requestedCount)) : 1;
 
   if (!apiKey) {
     res.status(400).json({ error: "No API key" });
@@ -42,8 +44,10 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         model,
         prompt,
+        n: count,
         size: "1024x1024",
         quality: "low",
+        output_format: "png",
       }),
     });
 
@@ -54,8 +58,12 @@ export default async function handler(req, res) {
       return;
     }
 
-    const imageBase64 = data?.data?.[0]?.b64_json;
-    if (!imageBase64) {
+    const images = (data?.data || [])
+      .map((item) => item?.b64_json)
+      .filter(Boolean)
+      .map((imageBase64) => `data:image/png;base64,${imageBase64}`);
+
+    if (!images.length) {
       res.status(502).json({ error: "No image returned by OpenAI" });
       return;
     }
@@ -63,7 +71,8 @@ export default async function handler(req, res) {
     res.status(200).json({
       model,
       prompt,
-      imageUrl: `data:image/png;base64,${imageBase64}`,
+      imageUrl: images[0],
+      images,
     });
   } catch (error) {
     res.status(500).json({ error: error.message });

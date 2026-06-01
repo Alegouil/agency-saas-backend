@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
-  Home, Users, Building2, BarChart3, Plus, X, ArrowUp, ChevronRight, Check, Sparkles, Info, Settings, Trash2, Cloud, Eye, AlertCircle, HelpCircle, MessageSquare, TrendingUp,
+  Home, Users, Building2, BarChart3, Plus, X, ArrowUp, ChevronRight, ChevronLeft, Check, Sparkles, Info, Settings, Trash2, Cloud, Eye, AlertCircle, HelpCircle, MessageSquare, TrendingUp, LoaderCircle,
   Crown, Cog, Palette, Search, Camera, Code, Monitor, Wrench, FlaskConical, Package,
   ClipboardList, Calendar, Wallet, Map, Target, Heart, Megaphone, Smartphone, Lightbulb, Layers, BarChart3 as ChartIcon, Brain, Zap,
 } from "lucide-react";
@@ -39,11 +39,11 @@ async function saveRemoteState(patch) {
   return response.json();
 }
 
-async function callImageGenerator(prompt) {
+async function callImageGenerator(prompt, count = 1) {
   const response = await fetch(IMAGE_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({ prompt, count }),
   });
 
   if (!response.ok) {
@@ -360,7 +360,10 @@ function buildBrief(config, agentId, currentAgents = []) {
     if (lines.length) parts.push(`DONNÉES MÉTIER — ${m.name} :\n` + lines.map((x) => "• " + x).join("\n"));
   });
 
-  if (!parts.length) return "L'entreprise n'a pas encore renseigné sa fiche. Fais au mieux et signale les infos manquantes.";
+  if (!parts.length) {
+    parts.push("L'entreprise n'a pas encore renseigné sa fiche. Fais au mieux et signale les infos manquantes.");
+  }
+  parts.push("RÈGLES DE SORTIE :\n• Réponds exclusivement en français naturel.\n• Aucun franglais.\n• Utilise des formulations prêtes à être relues par un client francophone.\n• Quand tu proposes un livrable, donne un titre clair en français dès la première ligne.");
   return parts.join("\n\n");
 }
 
@@ -528,6 +531,36 @@ function buildSnippet(text, title = "") {
   return body.length > 220 ? `${body.slice(0, 217).trim()}…` : body;
 }
 
+function inferImageCount(task, response) {
+  const text = `${task || ""}\n${response?.deliverable || ""}\n${response?.response || ""}`.toLowerCase();
+  const match = text.match(/\b(10|[1-9])\s+(?:posts?|publications?|visuels?|images?|slides?|cartes?|carrousels?)\b/);
+  if (match) return Math.max(1, Math.min(10, Number(match[1])));
+  if (text.includes("carrousel")) return 4;
+  return 1;
+}
+
+function getResponseTitle(message) {
+  if (!message) return "Réponse";
+  if (message.phase === "final_validation") return "Livrable final";
+  if (message.phase === "strategy") return "Cadrage stratégique";
+  if (message.phase === "production") return "Préparation opérationnelle";
+  if (message.phase === "copy") return "Rédaction";
+  if (message.phase === "design") return "Direction créative";
+  if (message.phase === "analysis") return "Analyse";
+  return "Contribution";
+}
+
+function getProgressLabel(agentId, phase) {
+  const name = AGENTS[agentId]?.name || "L'équipe";
+  if (phase === "strategy") return `Analyse de ${name} en cours`;
+  if (phase === "production") return `Réponse de ${name} en cours`;
+  if (phase === "copy") return "Rédaction du livrable en cours";
+  if (phase === "design") return "Direction visuelle en cours";
+  if (phase === "image_generation") return "Génération des images en cours";
+  if (phase === "final_validation") return `Validation finale par ${name} en cours`;
+  return `Traitement par ${name} en cours`;
+}
+
 function resolveMissionTitle(command, finalResponse, latestResponse, archived) {
   const titleSource = finalResponse?.deliverable || finalResponse?.content || (archived ? latestResponse?.deliverable || latestResponse?.content : "");
   if (titleSource?.trim()) {
@@ -574,6 +607,7 @@ function buildDesignerImagePrompt(config, task, response) {
     "Crée un visuel marketing premium, crédible et prêt à présenter à un client.",
     "Le rendu doit être élégant, contemporain, lisible sur mobile et cohérent avec une communication B2B haut de gamme.",
     "Évite les blocs de texte trop denses et privilégie une composition forte, claire et éditoriale.",
+    "Si plusieurs visuels sont demandés, génère une image autonome par visuel. Jamais de collage, jamais plusieurs publications dans une seule image.",
     task ? `Objectif utilisateur : ${task}` : "",
     response?.deliverable ? `Direction créative à suivre : ${response.deliverable}` : "",
     response?.response ? `Contexte complémentaire : ${response.response}` : "",
@@ -587,16 +621,18 @@ async function maybeGenerateDesignerAssets(config, agentId, task, phase, respons
   }
 
   try {
-    const result = await callImageGenerator(buildDesignerImagePrompt(config, task, response));
-    if (!result?.imageUrl) return [];
-    return [{
+    const count = inferImageCount(task, response);
+    const result = await callImageGenerator(buildDesignerImagePrompt(config, task, response), count);
+    const images = result?.images?.length ? result.images : (result?.imageUrl ? [result.imageUrl] : []);
+    return images.map((url, index) => ({
       kind: "image",
-      url: result.imageUrl,
-      alt: extractDeliverableTitle(response?.deliverable || response?.response || task, "Visuel généré"),
+      url,
+      alt: `${extractDeliverableTitle(response?.deliverable || response?.response || task, "Visuel généré")}${images.length > 1 ? ` · visuel ${index + 1}` : ""}`,
       revisedPrompt: result.revisedPrompt || "",
       prompt: result.prompt || "",
       model: result.model || "",
-    }];
+      index,
+    }));
   } catch (_error) {
     return [];
   }
@@ -607,11 +643,13 @@ function summarizeMission(messages, missionId) {
   const command = missionMessages.find((m) => m.type === "command");
   const finalResponse = [...missionMessages].reverse().find((m) => m.type === "response" && m.phase === "final_validation");
   const latestResponse = [...missionMessages].reverse().find((m) => m.type === "response");
+  const latestProgress = [...missionMessages].reverse().find((m) => m.type === "progress");
   const lastLifecycle = [...missionMessages].reverse().find((m) => m.type === "mission_archived" || m.type === "mission_restored" || m.type === "mission_deleted");
   const archived = lastLifecycle?.type === "mission_archived";
   const deleted = lastLifecycle?.type === "mission_deleted";
   const resolvedFinalResponse = finalResponse || (archived ? latestResponse : null);
   const latestVisualResponse = [...missionMessages].reverse().find((m) => m.type === "response" && m.assets?.length);
+  const relayPreview = !resolvedFinalResponse && latestResponse ? latestResponse : null;
 
   return {
     id: missionId,
@@ -623,6 +661,8 @@ function summarizeMission(messages, missionId) {
     finalResponse: resolvedFinalResponse,
     latestResponse,
     latestVisualResponse,
+    relayPreview,
+    latestProgress,
     archived,
     deleted,
     hasFinalDeliverable: Boolean(resolvedFinalResponse?.deliverable?.trim() || resolvedFinalResponse?.content?.trim()),
@@ -675,7 +715,7 @@ function buildExecutionPlan(agentId, task) {
     if (text.includes("linkedin") || text.includes("post") || text.includes("contenu")) {
       plan.push({
         agentId: "contentWriter",
-        task: `Rédige les contenus finaux ou brouillons des publications à partir du plan validé. Fournis un texte concret, structuré et prêt à être relu pour cette demande : ${task}`,
+        task: `Rédige les contenus finaux ou brouillons des publications à partir du plan validé. Fournis un texte concret, structuré et prêt à être relu en français impeccable pour cette demande : ${task}`,
         kind: "copy",
       });
     }
@@ -683,7 +723,7 @@ function buildExecutionPlan(agentId, task) {
     if (text.includes("linkedin") || text.includes("carrousel") || text.includes("visuel") || text.includes("design")) {
       plan.push({
         agentId: "graphiste",
-        task: `Propose la direction créative finale à partir du contenu et du plan : format, structure des slides/posts, style visuel, éléments graphiques et indications prêtes à produire pour cette demande : ${task}`,
+        task: `Propose la direction créative finale à partir du contenu et du plan : format, structure des visuels ou des slides, style visuel, éléments graphiques et indications prêtes à produire pour cette demande : ${task}`,
         kind: "design",
       });
     }
@@ -785,16 +825,151 @@ function Character({ id, size = 60, radius = "50%", status = "idle", badge = fal
   );
 }
 
-function AssetGallery({ assets = [] }) {
+function MissionStatusPill({ active, label }) {
+  return (
+    <div style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "6px 12px", background: active ? "#FFF1EC" : "#F0FAF2", borderRadius: 30 }}>
+      <span style={{ width: 8, height: 8, borderRadius: "50%", background: active ? "#F2785C" : "#5BC77F", animation: active ? "bounce 0.8s infinite" : "none" }} />
+      <span style={{ fontSize: 11.5, color: active ? "#F2785C" : "#5BC77F", fontFamily: "Nunito, sans-serif", fontWeight: 800 }}>{label}</span>
+    </div>
+  );
+}
+
+function AssetGallery({ assets = [], onOpen }) {
   if (!assets.length) return null;
 
+  const mainAsset = assets[0];
   return (
     <div style={{ marginTop: 10 }}>
       <div style={{ fontSize: 12.5, color: "#A89A86", fontFamily: "Nunito, sans-serif", fontWeight: 700, marginBottom: 7 }}>Visuels générés</div>
-      <div style={{ display: "grid", gridTemplateColumns: assets.length > 1 ? "1fr 1fr" : "1fr", gap: 8 }}>
-        {assets.map((asset, index) => (
-          <div key={`${asset.url}-${index}`} style={{ background: "#fff", border: "1px solid #F0E8DB", borderRadius: 16, overflow: "hidden", boxShadow: "0 4px 16px rgba(120,90,50,0.06)" }}>
-            <img src={asset.url} alt={asset.alt || "Visuel généré"} style={{ display: "block", width: "100%", aspectRatio: "1 / 1", objectFit: "cover", background: "#F7F1E6" }} />
+      <button onClick={() => onOpen?.(assets, 0)} style={{ width: "100%", border: "none", padding: 0, background: "transparent", cursor: "pointer", textAlign: "left" }}>
+        <div style={{ position: "relative", background: "#fff", border: "1px solid #F0E8DB", borderRadius: 18, overflow: "hidden", boxShadow: "0 4px 16px rgba(120,90,50,0.06)" }}>
+          <img src={mainAsset.url} alt={mainAsset.alt || "Visuel généré"} style={{ display: "block", width: "100%", aspectRatio: "4 / 5", objectFit: "cover", background: "#F7F1E6" }} />
+          {assets.length > 1 && (
+            <div style={{ position: "absolute", right: 10, bottom: 10, padding: "6px 10px", borderRadius: 999, background: "rgba(61,58,78,0.8)", color: "#fff", fontSize: 11.5, fontWeight: 800, fontFamily: "Nunito, sans-serif" }}>
+              {assets.length} visuels
+            </div>
+          )}
+        </div>
+      </button>
+      {assets.length > 1 && (
+        <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingTop: 8 }}>
+          {assets.map((asset, index) => (
+            <button key={`${asset.url}-${index}`} onClick={() => onOpen?.(assets, index)} style={{ border: "none", padding: 0, background: "transparent", cursor: "pointer", flexShrink: 0 }}>
+              <div style={{ width: 74, borderRadius: 14, overflow: "hidden", border: "1px solid #F0E8DB", background: "#fff" }}>
+                <img src={asset.url} alt={asset.alt || "Miniature visuelle"} style={{ display: "block", width: "100%", aspectRatio: "1 / 1", objectFit: "cover" }} />
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AssetLightbox({ group, onClose }) {
+  const [index, setIndex] = useState(group?.index || 0);
+  const startX = useRef(0);
+
+  useEffect(() => {
+    setIndex(group?.index || 0);
+  }, [group]);
+
+  if (!group?.assets?.length) return null;
+
+  const assets = group.assets;
+  const asset = assets[index];
+  const canPrev = index > 0;
+  const canNext = index < assets.length - 1;
+
+  const move = (delta) => {
+    setIndex((current) => Math.max(0, Math.min(assets.length - 1, current + delta)));
+  };
+
+  return (
+    <>
+      <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(35,28,20,0.78)", backdropFilter: "blur(8px)", zIndex: 25 }} />
+      <div style={{ position: "absolute", inset: 0, zIndex: 26, display: "flex", flexDirection: "column", justifyContent: "center", padding: "calc(env(safe-area-inset-top, 0px) + 20px) 16px calc(env(safe-area-inset-bottom, 0px) + 20px)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <div style={{ color: "#fff", fontFamily: "Fredoka, sans-serif", fontSize: 16, fontWeight: 600 }}>{asset.alt || "Visuel généré"}</div>
+          <button onClick={onClose} style={{ width: 38, height: 38, borderRadius: "50%", border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.08)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <X size={18} />
+          </button>
+        </div>
+        <div
+          onTouchStart={(event) => { startX.current = event.touches[0].clientX; }}
+          onTouchEnd={(event) => {
+            const delta = event.changedTouches[0].clientX - startX.current;
+            if (delta > 40) move(-1);
+            if (delta < -40) move(1);
+          }}
+          style={{ position: "relative", flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}
+        >
+          {canPrev && (
+            <button onClick={() => move(-1)} style={{ position: "absolute", left: 0, zIndex: 1, width: 42, height: 42, borderRadius: "50%", border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.08)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+              <ChevronLeft size={18} />
+            </button>
+          )}
+          <img src={asset.url} alt={asset.alt || "Visuel généré"} style={{ maxWidth: "100%", maxHeight: "100%", borderRadius: 22, objectFit: "contain", boxShadow: "0 18px 50px rgba(0,0,0,0.35)" }} />
+          {canNext && (
+            <button onClick={() => move(1)} style={{ position: "absolute", right: 0, zIndex: 1, width: 42, height: 42, borderRadius: "50%", border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.08)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+              <ChevronRight size={18} />
+            </button>
+          )}
+        </div>
+        {assets.length > 1 && (
+          <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 14 }}>
+            {assets.map((item, itemIndex) => (
+              <button key={`${item.url}-${itemIndex}`} onClick={() => setIndex(itemIndex)} style={{ border: "none", background: "transparent", padding: 0, cursor: "pointer" }}>
+                <span style={{ display: "block", width: itemIndex === index ? 24 : 8, height: 8, borderRadius: 999, background: itemIndex === index ? "#fff" : "rgba(255,255,255,0.35)", transition: "all 0.2s ease" }} />
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+function ConfirmDialog({ dialog, onCancel, onConfirm }) {
+  if (!dialog) return null;
+
+  return (
+    <>
+      <div onClick={onCancel} style={{ position: "absolute", inset: 0, background: "rgba(60,45,30,0.35)", backdropFilter: "blur(5px)", zIndex: 20 }} />
+      <div style={{ position: "absolute", left: 16, right: 16, bottom: "calc(env(safe-area-inset-bottom, 0px) + 18px)", zIndex: 21, background: "#fff", borderRadius: 26, border: "1px solid #F0E8DB", boxShadow: "0 18px 44px rgba(61,58,78,0.16)", padding: 18 }}>
+        <div style={{ width: 46, height: 46, borderRadius: 16, background: "#FFF1EE", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 12 }}>
+          <Trash2 size={20} color="#E0654E" />
+        </div>
+        <div style={{ fontSize: 18, fontWeight: 700, color: "#3D3A4E", fontFamily: "Fredoka, sans-serif", marginBottom: 6 }}>{dialog.title}</div>
+        <div style={{ fontSize: 13.5, color: "#7A7488", fontFamily: "Nunito, sans-serif", lineHeight: 1.55, marginBottom: 16 }}>{dialog.message}</div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onCancel} style={{ flex: 1, padding: "12px 14px", borderRadius: 14, border: "1px solid #F0E8DB", background: "#fff", color: "#7A7488", fontSize: 13, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
+            Annuler
+          </button>
+          <button onClick={onConfirm} style={{ flex: 1, padding: "12px 14px", borderRadius: 14, border: "none", background: "#E0654E", color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
+            Supprimer
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function MissionProgressPanel({ mission }) {
+  const progressEntries = mission.messages.filter((message) => message.type === "progress").slice(-4);
+  if (!progressEntries.length) return null;
+
+  return (
+    <div style={{ ...ST.card, padding: 14, marginBottom: 12, background: "linear-gradient(135deg, #FFF8F3, #fff)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <LoaderCircle size={16} color="#F2785C" style={{ animation: "spin 1.1s linear infinite" }} />
+        <div style={{ fontSize: 13, color: "#A89A86", fontFamily: "Nunito, sans-serif", fontWeight: 800 }}>Mission en cours</div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {progressEntries.map((entry) => (
+          <div key={entry.id} style={{ display: "flex", alignItems: "center", gap: 9, color: "#7A7488", fontSize: 13, fontFamily: "Nunito, sans-serif" }}>
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#F2785C", animation: "bounce 1s infinite" }} />
+            <span>{entry.content}</span>
           </div>
         ))}
       </div>
@@ -892,7 +1067,7 @@ function Typing({ id }) {
   );
 }
 
-function FeedMsg({ m, expanded, setExpanded, onValidate, onContinueMission, onAction, compact = false }) {
+function FeedMsg({ m, expanded, setExpanded, onValidate, onContinueMission, onAction, compact = false, title, muted = false, onOpenAssets }) {
   const time = m.ts?.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
   if (m.type === "command") {
     const t = AGENTS[m.target];
@@ -936,13 +1111,24 @@ function FeedMsg({ m, expanded, setExpanded, onValidate, onContinueMission, onAc
       </div>
     );
   }
+  if (m.type === "progress") {
+    return (
+      <div className="pop" style={{ marginBottom: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "12px 14px", background: "#FFF8F3", border: "1px solid #F7D8C7", borderRadius: 18 }}>
+          <LoaderCircle size={16} color="#F2785C" style={{ animation: "spin 1.1s linear infinite" }} />
+          <div style={{ fontSize: 13, color: "#7A7488", fontFamily: "Nunito, sans-serif", fontWeight: 700 }}>{m.content}</div>
+        </div>
+      </div>
+    );
+  }
   const a = AGENTS[m.agentId];
   return (
-    <div className="pop" style={{ marginBottom: 16 }}>
+    <div className="pop" style={{ marginBottom: 16, opacity: muted ? 0.6 : 1 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 6, flexWrap: "wrap" }}>
         <Character id={m.agentId} size={32} badge />
         <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", minWidth: 0 }}>
           <span style={{ fontSize: 13.5, fontWeight: 700, color: a.color, fontFamily: "Fredoka, sans-serif" }}>{a.name}</span>
+          {title && <span style={{ fontSize: 10.5, color: "#7A7488", background: "#F7F1E6", borderRadius: 999, padding: "3px 8px", fontFamily: "Nunito, sans-serif", fontWeight: 800 }}>{title}</span>}
           <span style={{ fontSize: 11, color: "#C3B8A6", fontFamily: "Nunito, sans-serif" }}>{a.role}</span>
           {m.flags?.includes("VALIDATION_REQUIRED") && <span style={{ fontSize: 10, color: "#E8A33D", background: "#FCF3E1", border: "1px solid #F2DDAE", borderRadius: 20, padding: "2px 9px", fontFamily: "Nunito, sans-serif", fontWeight: 700 }}>À valider</span>}
           {m.flags?.includes("BLOCKER") && <span style={{ fontSize: 10, color: "#E0654E", background: "#FFF1EE", border: "1px solid #FAD4CB", borderRadius: 20, padding: "2px 9px", fontFamily: "Nunito, sans-serif", fontWeight: 700 }}>Bloqué</span>}
@@ -978,7 +1164,7 @@ function FeedMsg({ m, expanded, setExpanded, onValidate, onContinueMission, onAc
             {expanded === m.id && <div style={{ marginTop: 9 }}><RichText text={m.deliverable} color="#5A5568" /></div>}
           </button>
         )}
-        {!compact && <AssetGallery assets={m.assets || []} />}
+        {!compact && <AssetGallery assets={m.assets || []} onOpen={onOpenAssets} />}
       </div>
     </div>
   );
@@ -1057,17 +1243,17 @@ function MissionListItem({ mission, selected, onOpen, onAction }) {
 
   return (
     <div style={{ position: "relative", marginBottom: 10, overflow: "hidden", borderRadius: 20 }}>
-      <div style={{ position: "absolute", inset: 0, display: "flex", justifyContent: "flex-end", alignItems: "center", padding: 8 }}>
-        <div style={{ width: actionWidth - 16, display: "flex", justifyContent: "flex-end", gap: 8 }}>
-          <button onClick={() => triggerAction("delete")} style={{ width: 90, border: "none", borderRadius: 18, background: "#E0654E", color: "#fff", fontSize: 12.5, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer", boxShadow: "0 6px 18px rgba(224,101,78,0.22)" }}>
+      <div style={{ position: "absolute", inset: 0, display: "flex", justifyContent: "flex-end", alignItems: "stretch" }}>
+        <div style={{ width: actionWidth, display: "flex", justifyContent: "flex-end", height: "100%" }}>
+          <button onClick={() => triggerAction("delete")} style={{ width: 102, height: "100%", border: "none", borderRadius: 0, background: "#E0654E", color: "#fff", fontSize: 12.5, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer", boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.06)" }}>
             Supprimer
           </button>
           {mission.archived ? (
-            <button onClick={() => triggerAction("restore")} style={{ width: 90, border: "none", borderRadius: 18, background: "#F4F1EB", color: "#7A7488", fontSize: 12.5, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
-              Ouvrir
+            <button onClick={() => triggerAction("restore")} style={{ width: 102, height: "100%", border: "none", borderRadius: 0, background: "#F4F1EB", color: "#7A7488", fontSize: 12.5, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
+              Rouvrir
             </button>
           ) : (
-            <button onClick={() => triggerAction("archive")} style={{ width: 90, border: "none", borderRadius: 18, background: "#42B76B", color: "#fff", fontSize: 12.5, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer", boxShadow: "0 6px 18px rgba(66,183,107,0.22)" }}>
+            <button onClick={() => triggerAction("archive")} style={{ width: 102, height: "100%", border: "none", borderRadius: 0, background: "#42B76B", color: "#fff", fontSize: 12.5, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer", boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.06)" }}>
               Terminer
             </button>
           )}
@@ -1099,7 +1285,7 @@ function MissionListItem({ mission, selected, onOpen, onAction }) {
             </div>
             <div style={{ fontSize: 11.5, color: agent.color, fontFamily: "Nunito, sans-serif", fontWeight: 700, marginBottom: 4 }}>{agent.name} · {agent.role}</div>
             <div style={{ fontSize: 12, color: "#9A93A8", fontFamily: "Nunito, sans-serif", lineHeight: 1.4 }}>
-              {mission.finalResponse ? "Livrable prêt" : "Livrable en attente"} · {new Date(mission.updatedAt).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+              {mission.finalResponse ? "Livrable prêt" : mission.latestResponse ? "Validation en cours" : "Livrable en attente"} · {new Date(mission.updatedAt).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
             </div>
           </div>
         </div>
@@ -1108,8 +1294,9 @@ function MissionListItem({ mission, selected, onOpen, onAction }) {
   );
 }
 
-function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueMission, onAction, onArchive, onBack }) {
-  const finalResponse = mission.finalResponse || mission.latestResponse;
+function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueMission, onAction, onArchive, onBack, onOpenAssets }) {
+  const finalResponse = mission.finalResponse || null;
+  const relayPreview = mission.relayPreview;
   const [openRelayId, setOpenRelayId] = useState(null);
   const relays = mission.messages
     .filter((m) => m.type === "delegation")
@@ -1127,11 +1314,15 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
         <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 10 }}>
           <Character id={mission.target} size={48} badge />
           <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 11.5, color: AGENTS[mission.target]?.color || "#9A93A8", fontFamily: "Nunito, sans-serif", fontWeight: 800, marginBottom: 3 }}>Responsable de mission</div>
             <div style={{ fontSize: 17, fontWeight: 700, color: "#3D3A4E", fontFamily: "Fredoka, sans-serif" }}>{mission.title}</div>
             <div style={{ fontSize: 12, color: "#9A93A8", fontFamily: "Nunito, sans-serif" }}>
               {mission.archived ? "Mission archivée" : "Mission en cours"} · {new Date(mission.updatedAt).toLocaleString("fr-FR")}
             </div>
           </div>
+        </div>
+        <div style={{ marginBottom: mission.command ? 12 : 0 }}>
+          <MissionStatusPill active={!mission.archived && !finalResponse} label={mission.archived ? "Terminée" : finalResponse ? "Prête à valider" : "En cours"} />
         </div>
         {mission.command && (
           <div style={{ background: "#FBF6EE", borderRadius: 14, padding: "12px 14px" }}>
@@ -1143,46 +1334,57 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
         )}
       </div>
 
+      {!finalResponse && <MissionProgressPanel mission={mission} />}
+
+      {relays.length > 0 && (
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 13, color: "#A89A86", fontFamily: "Nunito, sans-serif", fontWeight: 700, marginBottom: 8 }}>Relais de mission</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {relays.map(({ relay, receiverResponse }) => (
+              <div key={relay.id}>
+                <button onClick={() => setOpenRelayId(openRelayId === relay.id ? null : relay.id)} style={{ width: "100%", padding: "6px 2px", textAlign: "left", cursor: "pointer", border: "none", background: "transparent" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <Character id={relay.from} size={26} />
+                    <span style={{ fontSize: 12.5, color: AGENTS[relay.from]?.color || "#7A7488", fontFamily: "Nunito, sans-serif", fontWeight: 800 }}>{AGENTS[relay.from]?.name}</span>
+                    <ChevronRight size={14} color="#C3B8A6" />
+                    <Character id={relay.to} size={26} />
+                    <span style={{ fontSize: 12.5, color: AGENTS[relay.to]?.color || "#7A7488", fontFamily: "Nunito, sans-serif", fontWeight: 800 }}>{AGENTS[relay.to]?.name}</span>
+                  </div>
+                </button>
+                {openRelayId === relay.id && receiverResponse && (
+                  <div style={{ marginTop: 8 }}>
+                    <FeedMsg m={receiverResponse} compact={false} expanded={expanded} setExpanded={setExpanded} onValidate={onValidate} onContinueMission={onContinueMission} onAction={onAction} onOpenAssets={onOpenAssets} title={getResponseTitle(receiverResponse)} />
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {finalResponse ? (
         <div style={{ marginBottom: 12 }}>
-          {relays.length > 0 && (
-            <div style={{ marginBottom: 10 }}>
-              <div style={{ fontSize: 13, color: "#A89A86", fontFamily: "Nunito, sans-serif", fontWeight: 700, marginBottom: 8 }}>Relais de mission</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {relays.map(({ relay, receiverResponse }) => (
-                  <div key={relay.id}>
-                    <button onClick={() => setOpenRelayId(openRelayId === relay.id ? null : relay.id)} style={{ width: "100%", padding: "6px 2px", textAlign: "left", cursor: "pointer", border: "none", background: "transparent" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <Character id={relay.from} size={26} />
-                        <span style={{ fontSize: 12.5, color: AGENTS[relay.from]?.color || "#7A7488", fontFamily: "Nunito, sans-serif", fontWeight: 800 }}>{AGENTS[relay.from]?.name}</span>
-                        <ChevronRight size={14} color="#C3B8A6" />
-                        <Character id={relay.to} size={26} />
-                        <span style={{ fontSize: 12.5, color: AGENTS[relay.to]?.color || "#7A7488", fontFamily: "Nunito, sans-serif", fontWeight: 800 }}>{AGENTS[relay.to]?.name}</span>
-                      </div>
-                    </button>
-                    {openRelayId === relay.id && receiverResponse && (
-                      <div style={{ marginTop: 8 }}>
-                        <FeedMsg m={receiverResponse} compact={false} expanded={expanded} setExpanded={setExpanded} onValidate={onValidate} onContinueMission={onContinueMission} onAction={onAction} />
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
           <div style={{ fontSize: 13, color: "#A89A86", fontFamily: "Nunito, sans-serif", fontWeight: 700, marginBottom: 8 }}>Réponse finale</div>
-          <FeedMsg m={finalResponse} expanded={expanded} setExpanded={setExpanded} onValidate={onValidate} onContinueMission={onContinueMission} onAction={onAction} />
+          <FeedMsg m={finalResponse} expanded={expanded} setExpanded={setExpanded} onValidate={onValidate} onContinueMission={onContinueMission} onAction={onAction} onOpenAssets={onOpenAssets} title="Livrable final" />
           {mission.latestVisualResponse && mission.latestVisualResponse.id !== finalResponse.id && (
             <div style={{ ...ST.card, padding: 14, marginTop: 12 }}>
               <div style={{ fontSize: 13, color: "#A89A86", fontFamily: "Nunito, sans-serif", fontWeight: 700, marginBottom: 8 }}>Visuels retenus</div>
-              <AssetGallery assets={mission.latestVisualResponse.assets || []} />
+              <AssetGallery assets={mission.latestVisualResponse.assets || []} onOpen={onOpenAssets} />
             </div>
           )}
         </div>
       ) : (
-        <div style={{ ...ST.card, padding: 16, marginBottom: 12, fontSize: 13.5, color: "#9A93A8", fontFamily: "Nunito, sans-serif" }}>
-          L'équipe travaille encore. Le livrable final n'a pas encore été validé.
-        </div>
+        <>
+          {relayPreview && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 13, color: "#A89A86", fontFamily: "Nunito, sans-serif", fontWeight: 700, marginBottom: 8 }}>Dernière contribution en cours de consolidation</div>
+              <FeedMsg m={relayPreview} expanded={expanded} setExpanded={setExpanded} onValidate={onValidate} onContinueMission={onContinueMission} onAction={onAction} onOpenAssets={onOpenAssets} title={getResponseTitle(relayPreview)} muted />
+            </div>
+          )}
+          <div style={{ ...ST.card, padding: 16, marginBottom: 12, fontSize: 13.5, color: "#9A93A8", fontFamily: "Nunito, sans-serif" }}>
+            Le livrable final n'est pas encore validé par le responsable de mission.
+          </div>
+        </>
       )}
 
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
@@ -1211,7 +1413,7 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
   );
 }
 
-function MissionsScreen({ messages, expanded, setExpanded, onQuick, onValidate, onContinueMission, onAction, selectedMissionId, setSelectedMissionId, onArchiveMission }) {
+function MissionsScreen({ messages, expanded, setExpanded, onQuick, onValidate, onContinueMission, onAction, selectedMissionId, setSelectedMissionId, onArchiveMission, onOpenAssets }) {
   const [segment, setSegment] = useState("active");
   const missions = buildMissionList(messages);
   const activeMissions = missions.filter((m) => !m.archived && !m.deleted);
@@ -1220,7 +1422,7 @@ function MissionsScreen({ messages, expanded, setExpanded, onQuick, onValidate, 
   const selectedMission = missions.find((m) => m.id === selectedMissionId);
 
   if (selectedMission) {
-    return <MissionDetail mission={selectedMission} expanded={expanded} setExpanded={setExpanded} onValidate={onValidate} onContinueMission={onContinueMission} onAction={onAction} onArchive={onArchiveMission} onBack={() => setSelectedMissionId(null)} />;
+    return <MissionDetail mission={selectedMission} expanded={expanded} setExpanded={setExpanded} onValidate={onValidate} onContinueMission={onContinueMission} onAction={onAction} onArchive={onArchiveMission} onBack={() => setSelectedMissionId(null)} onOpenAssets={onOpenAssets} />;
   }
 
   return (
@@ -1573,6 +1775,8 @@ export default function AgencySaaS() {
   const [events, setEvents] = useState([]);
   const [thinking, setThinking] = useState([]);
   const [selectedMissionId, setSelectedMissionId] = useState(null);
+  const [confirmDialog, setConfirmDialog] = useState(null);
+  const [lightbox, setLightbox] = useState(null);
 
   const idRef = useRef(0);
   const configRef = useRef(config);
@@ -1667,6 +1871,7 @@ export default function AgencySaaS() {
     
     setStatus(agentId, "thinking");
     addEvent("thinking", agentId, { depth });
+    addMsg({ type: "progress", agentId, missionId, phase, content: getProgressLabel(agentId, phase) });
 
     try {
       const currentWorking = thinking.filter((id) => id !== agentId);
@@ -1686,6 +1891,9 @@ export default function AgencySaaS() {
       }
 
       const finalDeliverable = phase === "final_validation" ? (res.deliverable?.trim() ? res.deliverable : res.response) : res.deliverable;
+      if (shouldGenerateDesignerImage(agentId, phase, task, { ...res, deliverable: finalDeliverable })) {
+        addMsg({ type: "progress", agentId, missionId, phase: "image_generation", content: getProgressLabel(agentId, "image_generation") });
+      }
       const assets = await maybeGenerateDesignerAssets(configRef.current, agentId, task, phase, { ...res, deliverable: finalDeliverable });
       addMsg({ type: "response", agentId, content: res.response, deliverable: finalDeliverable, flags: res.flags || [], depth, extractions, missionId, phase, assets });
 
@@ -1760,9 +1968,8 @@ export default function AgencySaaS() {
     setSheet(true);
   }, []);
 
-  const handleArchiveMission = useCallback((missionId, action = "archive") => {
+  const performMissionAction = useCallback((missionId, action = "archive") => {
     if (action === "delete") {
-      if (typeof window !== "undefined" && !window.confirm("Supprimer définitivement cette mission ?")) return;
       addMsg({ type: "mission_deleted", missionId, content: "Mission supprimée" });
     } else if (action === "restore") {
       addMsg({ type: "mission_restored", missionId, content: "Mission désarchivée" });
@@ -1771,6 +1978,19 @@ export default function AgencySaaS() {
     }
     setSelectedMissionId(null);
   }, [addMsg]);
+
+  const handleArchiveMission = useCallback((missionId, action = "archive") => {
+    if (action === "delete") {
+      setConfirmDialog({
+        missionId,
+        action,
+        title: "Supprimer la mission ?",
+        message: "Cette action retire la mission de la liste. Le livrable et son historique ne seront plus visibles dans l'app.",
+      });
+      return;
+    }
+    performMissionAction(missionId, action);
+  }, [performMissionAction]);
 
   const handleValidate = (msgId, exIdx, approved) => {
     const msg = messages.find((m) => m.id === msgId);
@@ -1808,6 +2028,10 @@ export default function AgencySaaS() {
     setSelectedMissionId(missionId);
   }, []);
 
+  const openAssetPreview = useCallback((assets, index = 0) => {
+    setLightbox({ assets, index });
+  }, []);
+
   return (
     <div style={{ height: "100dvh", width: "100%", background: "#FBF6EE", overflow: "hidden", position: "relative", display: "flex", flexDirection: "column", fontFamily: "Nunito, sans-serif" }}>
       <style>{`
@@ -1816,6 +2040,7 @@ export default function AgencySaaS() {
         ::-webkit-scrollbar { width: 0; height: 0; }
         @keyframes ring { 0%{transform:scale(1);opacity:0.7;} 100%{transform:scale(1.3);opacity:0;} }
         @keyframes bounce { 0%,60%,100%{transform:translateY(0);} 30%{transform:translateY(-6px);} }
+        @keyframes spin { from{transform:rotate(0deg);} to{transform:rotate(360deg);} }
         @keyframes pop { from{opacity:0;transform:translateY(12px) scale(0.97);} to{opacity:1;transform:translateY(0) scale(1);} }
         @keyframes sheetUp { from{transform:translateY(100%);} to{transform:translateY(0);} }
         @keyframes fadeBg { from{opacity:0;} to{opacity:1;} }
@@ -1843,7 +2068,7 @@ export default function AgencySaaS() {
 
       {/* Screen */}
       <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
-        {tab === "missions" && <MissionsScreen messages={messages} expanded={expanded} setExpanded={setExpanded} onQuick={(q) => { setCommand(q.cmd); setSheet(true); }} onValidate={handleValidate} onContinueMission={handleContinueMission} onAction={handleSuggestedAction} selectedMissionId={selectedMissionId} setSelectedMissionId={setSelectedMissionId} onArchiveMission={handleArchiveMission} />}
+        {tab === "missions" && <MissionsScreen messages={messages} expanded={expanded} setExpanded={setExpanded} onQuick={(q) => { setCommand(q.cmd); setSheet(true); }} onValidate={handleValidate} onContinueMission={handleContinueMission} onAction={handleSuggestedAction} selectedMissionId={selectedMissionId} setSelectedMissionId={setSelectedMissionId} onArchiveMission={handleArchiveMission} onOpenAssets={openAssetPreview} />}
         {tab === "team" && <TeamScreen statuses={statuses} activity={activity} onOpen={() => {}} />}
         {tab === "company" && <ConfigScreen config={config} updateCompany={updateCompany} updateMetier={updateMetier} saved={saved} decisions={config.decisions || []} />}
         {tab === "bilan" && <BilanScreen kpis={kpis} messages={messages} activity={activity} leaderboard={leaderboard} maxAct={maxAct} onOpenMission={openMissionFromAnywhere} />}
@@ -1867,6 +2092,13 @@ export default function AgencySaaS() {
       </div>
 
       {sheet && <MissionSheet command={command} setCommand={setCommand} onSend={handleSend} onClose={() => setSheet(false)} />}
+      <ConfirmDialog dialog={confirmDialog} onCancel={() => setConfirmDialog(null)} onConfirm={() => {
+        if (!confirmDialog) return;
+        const { missionId, action } = confirmDialog;
+        setConfirmDialog(null);
+        performMissionAction(missionId, action);
+      }} />
+      <AssetLightbox group={lightbox} onClose={() => setLightbox(null)} />
     </div>
   );
 }
