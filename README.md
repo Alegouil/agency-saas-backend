@@ -1,17 +1,18 @@
-# agency-saas-backend monorepo
+# agency-saas monorepo
 
 Ce depot contient maintenant deux parties :
 
-- `backend/` : l'API deployable sur Vercel
+- `api/` + `vercel.json` : l'API deployable sur Vercel
 - `frontend/` : l'application React protegee par Basic Auth
 
 ## Structure
 
 ```text
 backend/
-  api/llm.js
-  env.example
-  vercel.json
+api/
+  llm.js
+env.example
+vercel.json
 frontend/
   src/
   package.json
@@ -26,7 +27,7 @@ Variables attendues :
 OPENAI_API_KEY=your_key_here
 ```
 
-Le backend historique utilise `backend/api/llm.js`.
+Le backend historique utilise `api/llm.js`.
 
 ## Frontend
 
