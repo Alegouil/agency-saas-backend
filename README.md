@@ -5,6 +5,7 @@ Ce depot contient maintenant deux parties :
 - `api/` + `vercel.json` : l'API deployable sur Vercel
 - `frontend/` : l'application React
 - `middleware.js` : la Basic Auth pour Vercel sur une seule URL
+- `supabase/` : le schema SQL de la base
 
 ## Structure
 
@@ -57,4 +58,7 @@ Variables a definir dans Vercel :
 OPENAI_API_KEY=your_key_here
 BASIC_AUTH_USER=admin
 BASIC_AUTH_PASSWORD=change-me-now
+SUPABASE_URL=your_project_url
+SUPABASE_ANON_KEY=your_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 ```

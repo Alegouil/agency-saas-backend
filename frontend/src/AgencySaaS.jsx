@@ -5,15 +5,100 @@ import {
   ClipboardList, Calendar, Wallet, Map, Target, Heart, Megaphone, Smartphone, Lightbulb, Layers, BarChart3 as ChartIcon, Brain, Zap,
 } from "lucide-react";
 
-const storageAdapter = {
-  async get(key) {
-    if (typeof window === "undefined") return { value: null };
-    const value = window.localStorage.getItem(key);
-    return { value };
+const STORAGE_ENDPOINT = "/api/state";
+
+const localStore = {
+  get(key) {
+    if (typeof window === "undefined") return null;
+    return window.localStorage.getItem(key);
   },
-  async set(key, value) {
+  set(key, value) {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(key, value);
+  },
+};
+
+async function fetchRemoteState() {
+  const response = await fetch(STORAGE_ENDPOINT);
+  if (!response.ok) {
+    throw new Error(`Remote state fetch failed (${response.status})`);
+  }
+  return response.json();
+}
+
+async function saveRemoteState(patch) {
+  const response = await fetch(STORAGE_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!response.ok) {
+    throw new Error(`Remote state save failed (${response.status})`);
+  }
+  return response.json();
+}
+
+const storageAdapter = {
+  _remoteState: null,
+  _remoteLoaded: false,
+
+  async ensureRemoteLoaded() {
+    if (this._remoteLoaded) return this._remoteState;
+    try {
+      this._remoteState = await fetchRemoteState();
+      this._remoteLoaded = true;
+      return this._remoteState;
+    } catch (_error) {
+      this._remoteLoaded = true;
+      this._remoteState = null;
+      return null;
+    }
+  },
+
+  async get(key) {
+    if (typeof window === "undefined") return { value: null };
+
+    const remoteState = await this.ensureRemoteLoaded();
+    if (remoteState) {
+      if (key === "agencyos:config" && remoteState.config) {
+        const value = JSON.stringify(remoteState.config);
+        localStore.set(key, value);
+        return { value };
+      }
+      if (key === "agencyos:workspace" && remoteState.messages && remoteState.kpis) {
+        const value = JSON.stringify({
+          messages: remoteState.messages,
+          kpis: remoteState.kpis,
+          lastId: remoteState.lastId || 0,
+        });
+        localStore.set(key, value);
+        return { value };
+      }
+    }
+
+    return { value: localStore.get(key) };
+  },
+
+  async set(key, value) {
+    if (typeof window === "undefined") return;
+
+    localStore.set(key, value);
+
+    try {
+      const parsed = JSON.parse(value);
+      if (key === "agencyos:config") {
+        this._remoteState = await saveRemoteState({ config: parsed });
+      } else if (key === "agencyos:workspace") {
+        this._remoteState = await saveRemoteState({
+          messages: parsed.messages || [],
+          kpis: parsed.kpis || {},
+          lastId: parsed.lastId || 0,
+        });
+      }
+      this._remoteLoaded = true;
+    } catch (_error) {
+      // Keep local persistence even if remote sync fails.
+    }
   },
 };
 
