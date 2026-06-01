@@ -244,6 +244,14 @@ const DEFAULT_CONFIG = {
   decisions: [],
 };
 
+const DEFAULT_KPIS = {
+  total: 0,
+  completed: 0,
+  deliverables: [],
+  flags: [],
+  activity: {},
+};
+
 // ══════════════════════════════════════════════════════════════════════
 // AUTO-EXTRACTION PATTERNS
 // ══════════════════════════════════════════════════════════════════════
@@ -1003,7 +1011,7 @@ export default function AgencySaaS() {
   const [config, setConfig] = useState(DEFAULT_CONFIG);
   const [messages, setMessages] = useState([]);
   const [statuses, setStatuses] = useState({});
-  const [kpis, setKpis] = useState({ total: 0, completed: 0, deliverables: [], flags: [], activity: {} });
+  const [kpis, setKpis] = useState(DEFAULT_KPIS);
   const [command, setCommand] = useState("");
   const [target, setTarget] = useState("ceo");
   const [processing, setProcessing] = useState(false);
@@ -1034,7 +1042,15 @@ export default function AgencySaaS() {
           if (w?.value) {
             const ws = JSON.parse(w.value);
             if (ws.messages) setMessages(ws.messages.map((m) => ({ ...m, ts: m.ts ? new Date(m.ts) : new Date() })));
-            if (ws.kpis) setKpis({ ...ws.kpis, deliverables: (ws.kpis.deliverables || []).map((d) => ({ ...d, ts: new Date(d.ts) })), flags: (ws.kpis.flags || []).map((f) => ({ ...f, ts: new Date(f.ts) })) });
+            if (ws.kpis) {
+              setKpis({
+                ...DEFAULT_KPIS,
+                ...ws.kpis,
+                deliverables: (ws.kpis.deliverables || []).map((d) => ({ ...d, ts: new Date(d.ts) })),
+                flags: (ws.kpis.flags || []).map((f) => ({ ...f, ts: new Date(f.ts) })),
+                activity: ws.kpis.activity || {},
+              });
+            }
             idRef.current = ws.lastId || 0;
           }
         }
