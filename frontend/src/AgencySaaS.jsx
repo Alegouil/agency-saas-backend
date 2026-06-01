@@ -377,6 +377,49 @@ async function callAgent(agentId, task, context, brief) {
   }
 }
 
+function renderInlineRichText(text, keyPrefix = "rt") {
+  return String(text || "").split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g).filter(Boolean).map((part, index) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={`${keyPrefix}-b-${index}`} style={{ fontWeight: 800 }}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith("*") && part.endsWith("*")) {
+      return <em key={`${keyPrefix}-i-${index}`} style={{ fontStyle: "italic" }}>{part.slice(1, -1)}</em>;
+    }
+    return <span key={`${keyPrefix}-t-${index}`}>{part}</span>;
+  });
+}
+
+function RichText({ text, color = "#4A4658" }) {
+  const blocks = String(text || "").split(/\n{2,}/).filter(Boolean);
+  return (
+    <div style={{ color, fontFamily: "Nunito, sans-serif", fontSize: 14, lineHeight: 1.65 }}>
+      {blocks.map((block, index) => {
+        const lines = block.split("\n").filter(Boolean);
+        if (lines.every((line) => /^\s*[-•]\s+/.test(line))) {
+          return (
+            <ul key={`ul-${index}`} style={{ margin: "0 0 10px 18px", padding: 0 }}>
+              {lines.map((line, lineIndex) => <li key={`li-${index}-${lineIndex}`} style={{ marginBottom: 4 }}>{renderInlineRichText(line.replace(/^\s*[-•]\s+/, ""), `li-${index}-${lineIndex}`)}</li>)}
+            </ul>
+          );
+        }
+        if (/^#{1,3}\s+/.test(block)) {
+          return <div key={`h-${index}`} style={{ fontSize: 14.5, fontWeight: 800, marginBottom: 8 }}>{renderInlineRichText(block.replace(/^#{1,3}\s+/, ""), `h-${index}`)}</div>;
+        }
+        return (
+          <p key={`p-${index}`} style={{ margin: "0 0 10px 0" }}>
+            {lines.map((line, lineIndex) => (
+              <span key={`line-${index}-${lineIndex}`}>
+                {renderInlineRichText(line, `p-${index}-${lineIndex}`)}
+                {lineIndex < lines.length - 1 ? <br /> : null}
+              </span>
+            ))}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
 function buildMissionContext(messages, missionId) {
   if (!missionId) return "";
   const scoped = messages.filter((m) => m.missionId === missionId).slice(-12);
@@ -753,8 +796,8 @@ function FeedMsg({ m, expanded, setExpanded, onValidate, onContinueMission, onAc
         </div>
       </div>
       <div>
-        <div style={{ background: "#fff", border: "1px solid #F0E8DB", borderRadius: "16px 16px 16px 5px", padding: "12px 15px", fontSize: 14, lineHeight: 1.6, color: "#4A4658", fontFamily: "Nunito, sans-serif", whiteSpace: "pre-wrap", boxShadow: "0 3px 14px rgba(120,90,50,0.04)" }}>
-          {compact ? `${(m.content || "").slice(0, 220)}${(m.content || "").length > 220 ? "…" : ""}` : m.content}
+        <div style={{ background: "#fff", border: "1px solid #F0E8DB", borderRadius: "16px 16px 16px 5px", padding: "12px 15px", color: "#4A4658", boxShadow: "0 3px 14px rgba(120,90,50,0.04)" }}>
+          {compact ? `${(m.content || "").slice(0, 220)}${(m.content || "").length > 220 ? "…" : ""}` : <RichText text={m.content} />}
         </div>
         {m.extractions && m.extractions.length > 0 && (
           <div style={{ marginTop: 9, padding: "10px 13px", background: "#F0F9FF", border: "1px solid #BAE6FD", borderRadius: 12 }}>
@@ -779,7 +822,7 @@ function FeedMsg({ m, expanded, setExpanded, onValidate, onContinueMission, onAc
               <span style={{ fontSize: 12.5, color: a.color, fontFamily: "Fredoka, sans-serif", fontWeight: 600, flex: 1 }}>Livrable</span>
               <ChevronRight size={16} color={a.color} style={{ transform: expanded === m.id ? "rotate(90deg)" : "none", transition: "transform 0.2s" }} />
             </div>
-            {expanded === m.id && <div style={{ marginTop: 9, fontSize: 13.5, lineHeight: 1.6, color: "#5A5568", fontFamily: "Nunito, sans-serif", whiteSpace: "pre-wrap" }}>{m.deliverable}</div>}
+            {expanded === m.id && <div style={{ marginTop: 9 }}><RichText text={m.deliverable} color="#5A5568" /></div>}
           </button>
         )}
         {!compact && m.type === "response" && m.phase === "final_validation" && (
@@ -839,6 +882,27 @@ function MissionListItem({ mission, selected, onOpen, onAction }) {
     setOffset(Math.abs(offset) > actionWidth * 0.35 ? -actionWidth : 0);
   };
 
+  const handlePointerDown = (event) => {
+    startXRef.current = event.clientX;
+    startOffsetRef.current = offset;
+    movedRef.current = false;
+    setDragging(true);
+  };
+
+  const handlePointerMove = (event) => {
+    if (!dragging) return;
+    const delta = event.clientX - startXRef.current;
+    if (Math.abs(delta) > 6) movedRef.current = true;
+    const next = Math.max(-actionWidth, Math.min(0, startOffsetRef.current + delta));
+    setOffset(next);
+  };
+
+  const handlePointerUp = () => {
+    if (!dragging) return;
+    setDragging(false);
+    setOffset(Math.abs(offset) > actionWidth * 0.35 ? -actionWidth : 0);
+  };
+
   const triggerAction = (action) => {
     setOffset(0);
     onAction(mission.id, action);
@@ -873,7 +937,11 @@ function MissionListItem({ mission, selected, onOpen, onAction }) {
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
-        style={{ ...ST.card, width: "100%", padding: 14, textAlign: "left", cursor: "pointer", position: "relative", zIndex: 1, transform: `translateX(${offset}px)`, transition: dragging ? "none" : "transform 0.22s ease" }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        style={{ ...ST.card, width: "100%", padding: 14, textAlign: "left", cursor: "pointer", position: "relative", zIndex: 1, transform: `translateX(${offset}px)`, transition: dragging ? "none" : "transform 0.22s ease", touchAction: "pan-y" }}
       >
         <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
           <Character id={mission.target} size={44} badge />
@@ -884,7 +952,7 @@ function MissionListItem({ mission, selected, onOpen, onAction }) {
             </div>
             <div style={{ fontSize: 11.5, color: agent.color, fontFamily: "Nunito, sans-serif", fontWeight: 700, marginBottom: 4 }}>{agent.name} · {agent.role}</div>
             <div style={{ fontSize: 12, color: "#9A93A8", fontFamily: "Nunito, sans-serif", lineHeight: 1.4 }}>
-              {mission.finalResponse ? "Livrable final prêt" : "Travail en cours"} · {new Date(mission.updatedAt).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+              {mission.finalResponse ? "Livrable prêt" : "Livrable en attente"} · {new Date(mission.updatedAt).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
             </div>
           </div>
         </div>
@@ -919,8 +987,8 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
           </div>
         </div>
         {mission.command && (
-          <div style={{ background: "#FBF6EE", borderRadius: 14, padding: "12px 14px", fontSize: 13.5, color: "#5A5568", fontFamily: "Nunito, sans-serif", lineHeight: 1.5 }}>
-            {mission.command.content}
+          <div style={{ background: "#FBF6EE", borderRadius: 14, padding: "12px 14px" }}>
+            <RichText text={mission.command.content} color="#5A5568" />
           </div>
         )}
       </div>
@@ -964,7 +1032,7 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
         {!mission.archived && (
           <button onClick={() => onArchive(mission.id)} disabled={!mission.hasFinalDeliverable} style={{ flex: 1, padding: "11px 14px", borderRadius: 14, border: "none", background: mission.hasFinalDeliverable ? "linear-gradient(135deg, #5BC77F, #42B76B)" : "#EDE4D5", color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: mission.hasFinalDeliverable ? "pointer" : "not-allowed" }}>
-            Terminer et archiver
+            Valider
           </button>
         )}
         {mission.archived ? (
@@ -978,7 +1046,7 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
           </>
         ) : (
           <button onClick={() => onContinueMission(finalResponse || mission.command)} style={{ flex: 1, padding: "11px 14px", borderRadius: 14, border: "1px solid #F0E8DB", background: "#fff", color: "#7A7488", fontSize: 13, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
-            Retour sur le livrable
+            Retour
           </button>
         )}
       </div>
@@ -1007,6 +1075,11 @@ function MissionsScreen({ messages, expanded, setExpanded, onQuick, onValidate, 
           </button>
         ))}
       </div>
+      {displayed.length > 0 && (
+        <div style={{ fontSize: 11.5, color: "#B3A892", fontFamily: "Nunito, sans-serif", marginBottom: 10, textAlign: "center" }}>
+          Glisse une mission vers la gauche pour afficher les actions.
+        </div>
+      )}
 
       {displayed.length === 0 ? (
         <div style={{ padding: "20px 0" }}>
@@ -1524,7 +1597,6 @@ export default function AgencySaaS() {
     } else if (action === "restore") {
       addMsg({ type: "mission_restored", missionId, content: "Mission désarchivée" });
     } else {
-      if (typeof window !== "undefined" && !window.confirm("Terminer et archiver cette mission ?")) return;
       addMsg({ type: "mission_archived", missionId, content: "Mission archivée" });
     }
     setSelectedMissionId(null);
