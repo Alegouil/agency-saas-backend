@@ -32,7 +32,7 @@ export default async function handler(req, res) {
           { role: 'system', content: brief },
           { role: 'user', content: msg }
         ],
-        max_tokens: 1000
+        max_tokens: 1800
       })
     });
 
@@ -50,7 +50,7 @@ export default async function handler(req, res) {
 
     res.json({
       thinking: json.thinking || '',
-      response: (json.response || text).substring(0, 2000),
+      response: json.response || text,
       deliverable: json.deliverable || '',
       question: null,
       delegations: [],
