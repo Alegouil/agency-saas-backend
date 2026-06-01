@@ -431,7 +431,9 @@ function summarizeMission(messages, missionId) {
   const command = missionMessages.find((m) => m.type === "command");
   const finalResponse = [...missionMessages].reverse().find((m) => m.type === "response" && m.phase === "final_validation");
   const latestResponse = [...missionMessages].reverse().find((m) => m.type === "response");
-  const archived = missionMessages.some((m) => m.type === "mission_archived");
+  const lastLifecycle = [...missionMessages].reverse().find((m) => m.type === "mission_archived" || m.type === "mission_restored" || m.type === "mission_deleted");
+  const archived = lastLifecycle?.type === "mission_archived";
+  const deleted = lastLifecycle?.type === "mission_deleted";
 
   return {
     id: missionId,
@@ -443,6 +445,7 @@ function summarizeMission(messages, missionId) {
     finalResponse,
     latestResponse,
     archived,
+    deleted,
     hasFinalDeliverable: Boolean(finalResponse?.deliverable?.trim() || finalResponse?.content?.trim()),
     messages: missionMessages,
   };
@@ -832,6 +835,13 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
   const finalResponse = mission.finalResponse || mission.latestResponse;
   const processMessages = mission.messages.filter((m) => m.type !== "command" && m.id !== finalResponse?.id && m.type !== "mission_archived");
   const [showProcess, setShowProcess] = useState(false);
+  const [openRelayId, setOpenRelayId] = useState(null);
+  const relays = mission.messages
+    .filter((m) => m.type === "delegation")
+    .map((relay) => ({
+      relay,
+      receiverResponse: mission.messages.find((m) => m.type === "response" && m.agentId === relay.to && m.id > relay.id),
+    }));
 
   return (
     <div style={{ height: "100%", overflowY: "auto", padding: "14px 16px 18px" }}>
@@ -857,6 +867,29 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
 
       {finalResponse ? (
         <div style={{ marginBottom: 12 }}>
+          {relays.length > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 13, color: "#A89A86", fontFamily: "Nunito, sans-serif", fontWeight: 700, marginBottom: 8 }}>Relais de mission</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {relays.map(({ relay, receiverResponse }) => (
+                  <div key={relay.id}>
+                    <button onClick={() => setOpenRelayId(openRelayId === relay.id ? null : relay.id)} style={{ ...ST.card, width: "100%", padding: "10px 12px", textAlign: "left", cursor: "pointer" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 12.5, color: AGENTS[relay.from]?.color || "#7A7488", fontFamily: "Nunito, sans-serif", fontWeight: 800 }}>{AGENTS[relay.from]?.name}</span>
+                        <ChevronRight size={14} color="#C3B8A6" />
+                        <span style={{ fontSize: 12.5, color: AGENTS[relay.to]?.color || "#7A7488", fontFamily: "Nunito, sans-serif", fontWeight: 800 }}>{AGENTS[relay.to]?.name}</span>
+                      </div>
+                    </button>
+                    {openRelayId === relay.id && receiverResponse && (
+                      <div style={{ marginTop: 8 }}>
+                        <FeedMsg m={receiverResponse} compact={false} expanded={expanded} setExpanded={setExpanded} onValidate={onValidate} onContinueMission={onContinueMission} onAction={onAction} />
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div style={{ fontSize: 13, color: "#A89A86", fontFamily: "Nunito, sans-serif", fontWeight: 700, marginBottom: 8 }}>Réponse finale</div>
           <FeedMsg m={finalResponse} expanded={expanded} setExpanded={setExpanded} onValidate={onValidate} onContinueMission={onContinueMission} onAction={onAction} />
         </div>
@@ -872,9 +905,20 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
             Terminer et archiver
           </button>
         )}
-        <button onClick={() => onContinueMission(finalResponse || mission.command)} style={{ flex: 1, padding: "11px 14px", borderRadius: 14, border: "1px solid #F0E8DB", background: "#fff", color: "#7A7488", fontSize: 13, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
-          Donner un retour
-        </button>
+        {mission.archived ? (
+          <>
+            <button onClick={() => onArchive(mission.id, "restore")} style={{ flex: 1, padding: "11px 14px", borderRadius: 14, border: "1px solid #F0E8DB", background: "#fff", color: "#7A7488", fontSize: 13, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
+              Désarchiver
+            </button>
+            <button onClick={() => onArchive(mission.id, "delete")} style={{ flex: 1, padding: "11px 14px", borderRadius: 14, border: "none", background: "#FFF1EE", color: "#E0654E", fontSize: 13, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
+              Supprimer
+            </button>
+          </>
+        ) : (
+          <button onClick={() => onContinueMission(finalResponse || mission.command)} style={{ flex: 1, padding: "11px 14px", borderRadius: 14, border: "1px solid #F0E8DB", background: "#fff", color: "#7A7488", fontSize: 13, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
+            Retour sur le livrable
+          </button>
+        )}
       </div>
 
       <button onClick={() => setShowProcess((p) => !p)} style={{ width: "100%", marginBottom: 12, padding: "12px 14px", borderRadius: 14, border: "1px solid #F0E8DB", background: "#fff", color: "#7A7488", fontSize: 13, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer", textAlign: "left" }}>
@@ -893,8 +937,8 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
 function MissionsScreen({ messages, expanded, setExpanded, onQuick, onValidate, onContinueMission, onAction, selectedMissionId, setSelectedMissionId, onArchiveMission }) {
   const [segment, setSegment] = useState("active");
   const missions = buildMissionList(messages);
-  const activeMissions = missions.filter((m) => !m.archived);
-  const archivedMissions = missions.filter((m) => m.archived);
+  const activeMissions = missions.filter((m) => !m.archived && !m.deleted);
+  const archivedMissions = missions.filter((m) => m.archived && !m.deleted);
   const displayed = segment === "active" ? activeMissions : archivedMissions;
   const selectedMission = missions.find((m) => m.id === selectedMissionId);
 
@@ -1404,10 +1448,15 @@ export default function AgencySaaS() {
   }, [command, processing, addMsg, addEvent, runAgent, selectedMissionId]);
 
   const handleContinueMission = useCallback((message) => {
-    setSelectedMissionId(message.missionId || null);
-    setCommand("");
+    const missionId = message.missionId || null;
+    const mission = buildMissionList(messages).find((m) => m.id === missionId);
+    setSelectedMissionId(missionId);
+    setCommand(`Retour sur le livrable final : merci d'améliorer, corriger ou compléter la mission selon mon retour.`);
+    if (mission?.target) {
+      setTarget(mission.target);
+    }
     setSheet(true);
-  }, []);
+  }, [messages]);
 
   const handleSuggestedAction = useCallback((message, action) => {
     setSelectedMissionId(message.missionId || null);
@@ -1415,8 +1464,15 @@ export default function AgencySaaS() {
     setSheet(true);
   }, []);
 
-  const handleArchiveMission = useCallback((missionId) => {
-    addMsg({ type: "mission_archived", missionId, content: "Mission archivée" });
+  const handleArchiveMission = useCallback((missionId, action = "archive") => {
+    if (action === "delete") {
+      if (typeof window !== "undefined" && !window.confirm("Supprimer définitivement cette mission archivée ?")) return;
+      addMsg({ type: "mission_deleted", missionId, content: "Mission supprimée" });
+    } else if (action === "restore") {
+      addMsg({ type: "mission_restored", missionId, content: "Mission désarchivée" });
+    } else {
+      addMsg({ type: "mission_archived", missionId, content: "Mission archivée" });
+    }
     setSelectedMissionId(null);
   }, [addMsg]);
 
