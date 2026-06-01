@@ -3,7 +3,8 @@
 Ce depot contient maintenant deux parties :
 
 - `api/` + `vercel.json` : l'API deployable sur Vercel
-- `frontend/` : l'application React protegee par Basic Auth
+- `frontend/` : l'application React
+- `middleware.js` : la Basic Auth pour Vercel sur une seule URL
 
 ## Structure
 
@@ -41,3 +42,19 @@ BASIC_AUTH_USER=admin BASIC_AUTH_PASSWORD=change-me-now npm start
 ```
 
 Puis ouvrir `http://127.0.0.1:3000`.
+
+## Deploiement Vercel
+
+Le repo est configure pour un seul projet Vercel :
+
+- frontend servi a la racine `/`
+- API disponible sur `/api/llm`
+- Basic Auth via variables `BASIC_AUTH_USER` et `BASIC_AUTH_PASSWORD`
+
+Variables a definir dans Vercel :
+
+```bash
+OPENAI_API_KEY=your_key_here
+BASIC_AUTH_USER=admin
+BASIC_AUTH_PASSWORD=change-me-now
+```

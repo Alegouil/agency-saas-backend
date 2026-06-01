@@ -256,7 +256,7 @@ function buildBrief(config, agentId, currentAgents = []) {
 }
 
 async function callAgent(agentId, task, context, brief) {
-  const BACKEND_URL = "https://agency-saas-backend.vercel.app/api/llm";
+  const BACKEND_URL = import.meta.env.VITE_API_URL || "/api/llm";
   
   console.log("📡 Calling backend:", BACKEND_URL);
 
