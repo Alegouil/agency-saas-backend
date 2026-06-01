@@ -1185,7 +1185,7 @@ function SectionCard({ icon: Icon, color, title, hint, children }) {
   );
 }
 
-function MissionListItem({ mission, selected, onOpen, onAction }) {
+function MissionListItem({ mission, selected, onOpen, onAction, isProcessing }) {
   const agent = AGENTS[mission.target];
   const actionWidth = 204;
   const [offset, setOffset] = useState(0);
@@ -1285,7 +1285,7 @@ function MissionListItem({ mission, selected, onOpen, onAction }) {
             </div>
             <div style={{ fontSize: 11.5, color: agent.color, fontFamily: "Nunito, sans-serif", fontWeight: 700, marginBottom: 4 }}>{agent.name} · {agent.role}</div>
             <div style={{ fontSize: 12, color: "#9A93A8", fontFamily: "Nunito, sans-serif", lineHeight: 1.4 }}>
-              {mission.finalResponse ? "Livrable prêt" : mission.latestResponse ? "Validation en cours" : "Livrable en attente"} · {new Date(mission.updatedAt).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+              {mission.finalResponse ? "Livrable prêt" : isProcessing ? "Équipe au travail" : mission.latestResponse ? "En attente de validation" : "Livrable en attente"} · {new Date(mission.updatedAt).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
             </div>
           </div>
         </div>
@@ -1294,7 +1294,7 @@ function MissionListItem({ mission, selected, onOpen, onAction }) {
   );
 }
 
-function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueMission, onAction, onArchive, onBack, onOpenAssets }) {
+function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueMission, onAction, onArchive, onBack, onOpenAssets, isProcessing }) {
   const finalResponse = mission.finalResponse || null;
   const relayPreview = mission.relayPreview;
   const [openRelayId, setOpenRelayId] = useState(null);
@@ -1322,7 +1322,7 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
           </div>
         </div>
         <div style={{ marginBottom: mission.command ? 12 : 0 }}>
-          <MissionStatusPill active={!mission.archived && !finalResponse} label={mission.archived ? "Terminée" : finalResponse ? "Prête à valider" : "En cours"} />
+          <MissionStatusPill active={isProcessing} label={mission.archived ? "Terminée" : finalResponse ? "Prête à valider" : isProcessing ? "En cours" : "En attente de validation"} />
         </div>
         {mission.command && (
           <div style={{ background: "#FBF6EE", borderRadius: 14, padding: "12px 14px" }}>
@@ -1334,7 +1334,7 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
         )}
       </div>
 
-      {!finalResponse && <MissionProgressPanel mission={mission} />}
+      {!finalResponse && isProcessing && <MissionProgressPanel mission={mission} />}
 
       {relays.length > 0 && (
         <div style={{ marginBottom: 10 }}>
@@ -1377,12 +1377,12 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
         <>
           {relayPreview && (
             <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 13, color: "#A89A86", fontFamily: "Nunito, sans-serif", fontWeight: 700, marginBottom: 8 }}>Dernière contribution en cours de consolidation</div>
-              <FeedMsg m={relayPreview} expanded={expanded} setExpanded={setExpanded} onValidate={onValidate} onContinueMission={onContinueMission} onAction={onAction} onOpenAssets={onOpenAssets} title={getResponseTitle(relayPreview)} muted />
+              <div style={{ fontSize: 13, color: "#A89A86", fontFamily: "Nunito, sans-serif", fontWeight: 700, marginBottom: 8 }}>{isProcessing ? "Dernière contribution en cours de consolidation" : "Dernière contribution reçue"}</div>
+              <FeedMsg m={relayPreview} expanded={expanded} setExpanded={setExpanded} onValidate={onValidate} onContinueMission={onContinueMission} onAction={onAction} onOpenAssets={onOpenAssets} title={getResponseTitle(relayPreview)} muted={isProcessing} />
             </div>
           )}
           <div style={{ ...ST.card, padding: 16, marginBottom: 12, fontSize: 13.5, color: "#9A93A8", fontFamily: "Nunito, sans-serif" }}>
-            Le livrable final n'est pas encore validé par le responsable de mission.
+            {isProcessing ? "Le livrable final n'est pas encore validé par le responsable de mission." : "L'équipe a terminé son travail. Il reste à produire ou valider le livrable final du responsable de mission."}
           </div>
         </>
       )}
@@ -1413,7 +1413,7 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
   );
 }
 
-function MissionsScreen({ messages, expanded, setExpanded, onQuick, onValidate, onContinueMission, onAction, selectedMissionId, setSelectedMissionId, onArchiveMission, onOpenAssets }) {
+function MissionsScreen({ messages, expanded, setExpanded, onQuick, onValidate, onContinueMission, onAction, selectedMissionId, setSelectedMissionId, onArchiveMission, onOpenAssets, processingMissionId }) {
   const [segment, setSegment] = useState("active");
   const missions = buildMissionList(messages);
   const activeMissions = missions.filter((m) => !m.archived && !m.deleted);
@@ -1422,7 +1422,7 @@ function MissionsScreen({ messages, expanded, setExpanded, onQuick, onValidate, 
   const selectedMission = missions.find((m) => m.id === selectedMissionId);
 
   if (selectedMission) {
-    return <MissionDetail mission={selectedMission} expanded={expanded} setExpanded={setExpanded} onValidate={onValidate} onContinueMission={onContinueMission} onAction={onAction} onArchive={onArchiveMission} onBack={() => setSelectedMissionId(null)} onOpenAssets={onOpenAssets} />;
+    return <MissionDetail mission={selectedMission} expanded={expanded} setExpanded={setExpanded} onValidate={onValidate} onContinueMission={onContinueMission} onAction={onAction} onArchive={onArchiveMission} onBack={() => setSelectedMissionId(null)} onOpenAssets={onOpenAssets} isProcessing={processingMissionId === selectedMission.id} />;
   }
 
   return (
@@ -1465,7 +1465,7 @@ function MissionsScreen({ messages, expanded, setExpanded, onQuick, onValidate, 
           )}
         </div>
       ) : (
-        displayed.map((mission) => <MissionListItem key={mission.id} mission={mission} onOpen={setSelectedMissionId} onAction={onArchiveMission} />)
+        displayed.map((mission) => <MissionListItem key={mission.id} mission={mission} onOpen={setSelectedMissionId} onAction={onArchiveMission} isProcessing={processingMissionId === mission.id} />)
       )}
     </div>
   );
@@ -1768,6 +1768,7 @@ export default function AgencySaaS() {
   const [command, setCommand] = useState("");
   const [target, setTarget] = useState("ceo");
   const [processing, setProcessing] = useState(false);
+  const [processingMissionId, setProcessingMissionId] = useState(null);
   const [tab, setTab] = useState("missions");
   const [sheet, setSheet] = useState(false);
   const [expanded, setExpanded] = useState(null);
@@ -1936,19 +1937,24 @@ export default function AgencySaaS() {
     const leadAgentId = existingMission?.target || routeObjectiveToLead(cmd);
     const plan = buildExecutionPlan(leadAgentId, cmd);
     setCommand(""); setSheet(false); setTab("missions"); setProcessing(true);
+    setProcessingMissionId(missionId);
     setSelectedMissionId(missionId);
     addMsg({ type: "command", target: leadAgentId, content: cmd, missionId });
     addMsg({ type: "auto_saved", content: `Mission routée vers ${AGENTS[leadAgentId].name}. ${plan.length > 1 ? `${plan.length} étapes prévues.` : "Exécution directe."}`, missionId });
     addEvent("command_received", leadAgentId, { cmd });
-    for (let i = 0; i < plan.length; i += 1) {
-      const step = plan[i];
-      if (i > 0) {
-        addEvent("delegation", leadAgentId, { to: step.agentId, task: step.task });
-        addMsg({ type: "delegation", from: plan[i - 1].agentId, to: step.agentId, missionId });
+    try {
+      for (let i = 0; i < plan.length; i += 1) {
+        const step = plan[i];
+        if (i > 0) {
+          addEvent("delegation", leadAgentId, { to: step.agentId, task: step.task });
+          addMsg({ type: "delegation", from: plan[i - 1].agentId, to: step.agentId, missionId });
+        }
+        await runAgent(step.agentId, step.task, i, "", missionId, step.kind);
       }
-      await runAgent(step.agentId, step.task, i, "", missionId, step.kind);
+    } finally {
+      setProcessing(false);
+      setProcessingMissionId(null);
     }
-    setProcessing(false);
   }, [command, processing, addMsg, addEvent, runAgent, selectedMissionId, messages]);
 
   const handleContinueMission = useCallback((message) => {
@@ -2068,7 +2074,7 @@ export default function AgencySaaS() {
 
       {/* Screen */}
       <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
-        {tab === "missions" && <MissionsScreen messages={messages} expanded={expanded} setExpanded={setExpanded} onQuick={(q) => { setCommand(q.cmd); setSheet(true); }} onValidate={handleValidate} onContinueMission={handleContinueMission} onAction={handleSuggestedAction} selectedMissionId={selectedMissionId} setSelectedMissionId={setSelectedMissionId} onArchiveMission={handleArchiveMission} onOpenAssets={openAssetPreview} />}
+        {tab === "missions" && <MissionsScreen messages={messages} expanded={expanded} setExpanded={setExpanded} onQuick={(q) => { setCommand(q.cmd); setSheet(true); }} onValidate={handleValidate} onContinueMission={handleContinueMission} onAction={handleSuggestedAction} selectedMissionId={selectedMissionId} setSelectedMissionId={setSelectedMissionId} onArchiveMission={handleArchiveMission} onOpenAssets={openAssetPreview} processingMissionId={processingMissionId} />}
         {tab === "team" && <TeamScreen statuses={statuses} activity={activity} onOpen={() => {}} />}
         {tab === "company" && <ConfigScreen config={config} updateCompany={updateCompany} updateMetier={updateMetier} saved={saved} decisions={config.decisions || []} />}
         {tab === "bilan" && <BilanScreen kpis={kpis} messages={messages} activity={activity} leaderboard={leaderboard} maxAct={maxAct} onOpenMission={openMissionFromAnywhere} />}
