@@ -172,7 +172,7 @@ const HAIRC = ["#4A3528", "#7A5638", "#C9A45C", "#262320", "#A85A35", "#8A8A8A",
 const QUICK = [
   { label: "Améliorer nos offres", target: "dirOffres", cmd: "Analysez nos offres et notre marché. Proposez 3 améliorations concrètes et 2 nouvelles offres pour 2026." },
   { label: "Trouver des clients", target: "dirTourVentes", cmd: "Trouvez 10 prospects idéaux selon nos clients cibles. Classez par potentiel et proposez une approche de contact." },
-  { label: "Plan LinkedIn 3 mois", target: "dirCom", cmd: "Proposez un plan de publications LinkedIn (1 post/2j) pour montrer notre expertise et booste notre notoriété." },
+  { label: "Plan LinkedIn 3 mois", target: "dirCom", cmd: "Cadrez un plan LinkedIn sur 3 mois. Commencez par définir la stratégie, puis déléguez l'exécution détaillée à l'animateur et proposez ensuite une mise en forme design si utile." },
   { label: "Argumentaire de vente", target: "dirVentes", cmd: "Préparez un argumentaire clair pour notre offre principale. Listez objections courantes et réponses." },
 ];
 
@@ -377,6 +377,51 @@ async function callAgent(agentId, task, context, brief) {
   }
 }
 
+function buildMissionContext(messages, missionId) {
+  if (!missionId) return "";
+  const scoped = messages.filter((m) => m.missionId === missionId).slice(-12);
+  if (!scoped.length) return "";
+
+  return scoped.map((m) => {
+    if (m.type === "command") return `Utilisateur -> ${AGENTS[m.target]?.name || m.target}: ${m.content}`;
+    if (m.type === "response") return `${AGENTS[m.agentId]?.name || m.agentId}: ${m.content}`;
+    if (m.type === "delegation") return `${AGENTS[m.from]?.name || m.from} delegue a ${AGENTS[m.to]?.name || m.to}`;
+    return "";
+  }).filter(Boolean).join("\n");
+}
+
+function buildSuggestedActions(message) {
+  if (!message || message.type !== "response") return [];
+  const text = `${message.content || ""}\n${message.deliverable || ""}`.toLowerCase();
+  const actions = [];
+
+  if ((message.agentId === "dirCom" || message.agentId === "chargeCom") && text.includes("linkedin")) {
+    actions.push({
+      label: "Envoyer au designer",
+      target: "graphiste",
+      cmd: "Transforme ce plan LinkedIn en proposition de carrousel. Donne 3 concepts de slides, la structure de chaque slide et une direction visuelle prête à produire.",
+    });
+  }
+
+  if (message.agentId === "graphiste" || message.agentId === "dirArt") {
+    actions.push({
+      label: "Faire valider par la com",
+      target: "dirCom",
+      cmd: "Relis cette proposition créative, valide-la ou demande 3 ajustements concrets avant production.",
+    });
+  }
+
+  if (message.agentId === "chargeCom") {
+    actions.push({
+      label: "Demander validation direction",
+      target: "dirCom",
+      cmd: "Valide ce livrable de communication, affine l'angle si nécessaire et décide de la suite à produire.",
+    });
+  }
+
+  return actions;
+}
+
 const ST = {
   card: { background: "#fff", borderRadius: 20, border: "1px solid #F0E8DB", boxShadow: "0 4px 20px rgba(120,90,50,0.05)" },
   input: { width: "100%", background: "#FBF6EE", border: "1.5px solid #EFE7DA", borderRadius: 12, padding: "11px 13px", fontFamily: "Nunito, sans-serif", fontSize: 16, color: "#3D3A4E", lineHeight: 1.5 },
@@ -521,7 +566,7 @@ function Typing({ id }) {
   );
 }
 
-function FeedMsg({ m, expanded, setExpanded, onValidate }) {
+function FeedMsg({ m, expanded, setExpanded, onValidate, onContinueMission, onAction }) {
   const time = m.ts?.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
   if (m.type === "command") {
     const t = AGENTS[m.target];
@@ -563,6 +608,7 @@ function FeedMsg({ m, expanded, setExpanded, onValidate }) {
     );
   }
   const a = AGENTS[m.agentId];
+  const suggestedActions = buildSuggestedActions(m);
   return (
     <div className="pop" style={{ display: "flex", gap: 9, alignItems: "flex-end", marginBottom: 16, marginLeft: Math.min(m.depth || 0, 2) * 12 }}>
       <Character id={m.agentId} size={36} badge />
@@ -600,6 +646,18 @@ function FeedMsg({ m, expanded, setExpanded, onValidate }) {
             {expanded === m.id && <div style={{ marginTop: 9, fontSize: 13.5, lineHeight: 1.6, color: "#5A5568", fontFamily: "Nunito, sans-serif", whiteSpace: "pre-wrap" }}>{m.deliverable}</div>}
           </button>
         )}
+        {(m.type === "response" || m.type === "command") && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+            <button onClick={() => onContinueMission(m)} style={{ padding: "8px 12px", borderRadius: 20, border: "1px solid #F0E8DB", background: "#fff", color: "#7A7488", fontSize: 12.5, fontFamily: "Nunito, sans-serif", fontWeight: 700, cursor: "pointer" }}>
+              Continuer cette mission
+            </button>
+            {suggestedActions.map((action) => (
+              <button key={action.label} onClick={() => onAction(m, action)} style={{ padding: "8px 12px", borderRadius: 20, border: `1px solid ${a.color}55`, background: `${a.color}10`, color: a.color, fontSize: 12.5, fontFamily: "Nunito, sans-serif", fontWeight: 700, cursor: "pointer" }}>
+                {action.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -620,10 +678,12 @@ function SectionCard({ icon: Icon, color, title, hint, children }) {
   );
 }
 
-function FeedScreen({ messages, thinking, expanded, setExpanded, onQuick, onValidate, statuses, activity, onOpen }) {
+function FeedScreen({ messages, thinking, expanded, setExpanded, onQuick, onValidate, statuses, activity, onOpen, currentMissionId, setCurrentMissionId, onContinueMission, onAction }) {
   const [mode, setMode] = useState("feed");
   const ref = useRef(null);
   useEffect(() => { if (ref.current && mode === "feed") ref.current.scrollTop = ref.current.scrollHeight; }, [messages, thinking, mode]);
+  const missionCommands = messages.filter((m) => m.type === "command").slice().reverse();
+  const filteredMessages = currentMissionId === "all" ? messages : messages.filter((m) => m.missionId === currentMissionId);
   
   if (mode === "team") {
     return (
@@ -673,8 +733,18 @@ function FeedScreen({ messages, thinking, expanded, setExpanded, onQuick, onVali
           <button key={m.id} onClick={() => setMode(m.id)} style={{ flex: 1, padding: "8px", borderRadius: 9, border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 700, fontFamily: "Nunito, sans-serif", background: mode === m.id ? "#F2785C" : "#fff", color: mode === m.id ? "#fff" : "#9A93A8", WebkitTapHighlightColor: "transparent" }}>{m.label}</button>
         ))}
       </div>
+      <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 10, marginBottom: 8, flexShrink: 0 }}>
+        <button onClick={() => setCurrentMissionId("all")} style={{ flexShrink: 0, padding: "8px 12px", borderRadius: 20, border: "1px solid #F0E8DB", background: currentMissionId === "all" ? "#F2785C" : "#fff", color: currentMissionId === "all" ? "#fff" : "#7A7488", fontSize: 12.5, fontFamily: "Nunito, sans-serif", fontWeight: 700, cursor: "pointer" }}>
+          Toutes les missions
+        </button>
+        {missionCommands.map((m) => (
+          <button key={m.missionId || m.id} onClick={() => setCurrentMissionId(m.missionId)} style={{ flexShrink: 0, padding: "8px 12px", borderRadius: 20, border: "1px solid #F0E8DB", background: currentMissionId === m.missionId ? "#F2785C" : "#fff", color: currentMissionId === m.missionId ? "#fff" : "#7A7488", fontSize: 12.5, fontFamily: "Nunito, sans-serif", fontWeight: 700, cursor: "pointer", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {m.content}
+          </button>
+        ))}
+      </div>
       <div ref={ref} style={{ flex: 1, overflowY: "auto" }}>
-        {messages.length === 0 ? (
+        {filteredMessages.length === 0 ? (
           <div style={{ padding: "20px 0" }}>
             <div style={{ textAlign: "center", marginBottom: 22 }}>
               <div style={{ display: "flex", justifyContent: "center", marginBottom: 14 }}>
@@ -701,7 +771,7 @@ function FeedScreen({ messages, thinking, expanded, setExpanded, onQuick, onVali
           </div>
         ) : (
           <div>
-            {messages.map((m) => <FeedMsg key={m.id} m={m} expanded={expanded} setExpanded={setExpanded} onValidate={onValidate} />)}
+            {filteredMessages.map((m) => <FeedMsg key={m.id} m={m} expanded={expanded} setExpanded={setExpanded} onValidate={onValidate} onContinueMission={onContinueMission} onAction={onAction} />)}
             {thinking.map((id) => <Typing key={"t" + id} id={id} />)}
           </div>
         )}
@@ -1021,6 +1091,7 @@ export default function AgencySaaS() {
   const [saved, setSaved] = useState(true);
   const [events, setEvents] = useState([]);
   const [thinking, setThinking] = useState([]);
+  const [currentMissionId, setCurrentMissionId] = useState("all");
 
   const idRef = useRef(0);
   const configRef = useRef(config);
@@ -1105,7 +1176,7 @@ export default function AgencySaaS() {
   const updateCompany = useCallback((key, value) => setConfig((p) => ({ ...p, company: { ...p.company, [key]: value } })), []);
   const updateMetier = useCallback((mid, key, value) => setConfig((p) => ({ ...p, metiers: { ...p.metiers, [mid]: { ...(p.metiers[mid] || {}), [key]: value } } })), []);
 
-  const runAgent = useCallback(async (agentId, task, depth, context) => {
+  const runAgent = useCallback(async (agentId, task, depth, context, missionId) => {
     if (depth > 3 || !AGENTS[agentId]) return;
     
     setStatus(agentId, "thinking");
@@ -1114,7 +1185,9 @@ export default function AgencySaaS() {
     try {
       const currentWorking = thinking.filter((id) => id !== agentId);
       const brief = buildBrief(configRef.current, agentId, currentWorking);
-      const res = await callAgent(agentId, task, context, brief);
+      const missionContext = buildMissionContext(messages, missionId);
+      const mergedContext = [missionContext, context].filter(Boolean).join("\n\n");
+      const res = await callAgent(agentId, task, mergedContext, brief);
 
       addEvent("response", agentId, { response: res.response.substring(0, 150) });
       
@@ -1126,7 +1199,7 @@ export default function AgencySaaS() {
         extractions = extractFromLivrable(res.deliverable, agentId);
       }
 
-      addMsg({ type: "response", agentId, content: res.response, deliverable: res.deliverable, flags: res.flags || [], depth, extractions });
+      addMsg({ type: "response", agentId, content: res.response, deliverable: res.deliverable, flags: res.flags || [], depth, extractions, missionId });
 
       if (res.deliverable?.trim()) {
         setKpis((p) => ({ ...p, deliverables: [...p.deliverables, { agentId, content: res.deliverable, ts: new Date(), task }] }));
@@ -1144,8 +1217,8 @@ export default function AgencySaaS() {
           if (AGENTS[d.agentId]) {
             await new Promise((r) => setTimeout(r, 350));
             addEvent("delegation", agentId, { to: d.agentId, task: d.task });
-            addMsg({ type: "delegation", from: agentId, to: d.agentId });
-            await runAgent(d.agentId, d.task, depth + 1, res.response);
+            addMsg({ type: "delegation", from: agentId, to: d.agentId, missionId });
+            await runAgent(d.agentId, d.task, depth + 1, res.response, missionId);
           }
         }
       }
@@ -1156,17 +1229,33 @@ export default function AgencySaaS() {
       addMsg({ type: "error", agentId, content: e.message });
     }
     setTimeout(() => setStatus(agentId, "idle"), 2500);
-  }, [addEvent, addMsg, setStatus, thinking]);
+  }, [addEvent, addMsg, setStatus, thinking, messages]);
 
   const handleSend = useCallback(async () => {
     if (!command.trim() || processing) return;
     const cmd = command.trim();
+    const missionId = currentMissionId !== "all" ? currentMissionId : `mission-${Date.now()}`;
     setCommand(""); setSheet(false); setTab("missions"); setProcessing(true);
-    addMsg({ type: "command", target, content: cmd });
+    setCurrentMissionId(missionId);
+    addMsg({ type: "command", target, content: cmd, missionId });
     addEvent("command_received", target, { cmd });
-    await runAgent(target, cmd, 0, "");
+    await runAgent(target, cmd, 0, "", missionId);
     setProcessing(false);
-  }, [command, target, processing, addMsg, addEvent, runAgent]);
+  }, [command, target, processing, addMsg, addEvent, runAgent, currentMissionId]);
+
+  const handleContinueMission = useCallback((message) => {
+    setCurrentMissionId(message.missionId || "all");
+    setTarget(message.agentId || message.target || "ceo");
+    setCommand("");
+    setSheet(true);
+  }, []);
+
+  const handleSuggestedAction = useCallback((message, action) => {
+    setCurrentMissionId(message.missionId || "all");
+    setTarget(action.target);
+    setCommand(action.cmd);
+    setSheet(true);
+  }, []);
 
   const handleValidate = (msgId, exIdx, approved) => {
     const msg = messages.find((m) => m.id === msgId);
@@ -1235,7 +1324,7 @@ export default function AgencySaaS() {
 
       {/* Screen */}
       <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
-        {tab === "missions" && <FeedScreen messages={messages} thinking={thinking} expanded={expanded} setExpanded={setExpanded} onQuick={(q) => { setTarget(q.target); setCommand(q.cmd); setSheet(true); }} onValidate={handleValidate} statuses={statuses} activity={activity} onOpen={(id) => { setTarget(id); setSheet(true); }} />}
+        {tab === "missions" && <FeedScreen messages={messages} thinking={thinking} expanded={expanded} setExpanded={setExpanded} onQuick={(q) => { setCurrentMissionId("all"); setTarget(q.target); setCommand(q.cmd); setSheet(true); }} onValidate={handleValidate} statuses={statuses} activity={activity} onOpen={(id) => { setTarget(id); setSheet(true); }} currentMissionId={currentMissionId} setCurrentMissionId={setCurrentMissionId} onContinueMission={handleContinueMission} onAction={handleSuggestedAction} />}
         {tab === "observatory" && <ObservatoryScreen events={events} thinking={thinking} config={config} />}
         {tab === "company" && <ConfigScreen config={config} updateCompany={updateCompany} updateMetier={updateMetier} saved={saved} decisions={config.decisions || []} />}
         {tab === "bilan" && <BilanScreen kpis={kpis} activity={activity} leaderboard={leaderboard} maxAct={maxAct} />}
