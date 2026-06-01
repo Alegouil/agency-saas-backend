@@ -422,6 +422,102 @@ function buildSuggestedActions(message) {
   return actions;
 }
 
+const ROUTING_RULES = [
+  { agentId: "dirCom", keywords: ["linkedin", "post", "publication", "reseaux", "réseaux", "carrousel", "communication", "contenu"] },
+  { agentId: "dirOffres", keywords: ["offre", "pricing", "prix", "proposition de valeur", "pack", "positionnement"] },
+  { agentId: "dirVentes", keywords: ["vente", "prospect", "lead", "commercial", "crm", "closing"] },
+  { agentId: "seaSpec", keywords: ["ads", "sea", "google ads", "meta ads", "campagne", "roas", "cpa"] },
+  { agentId: "leadDev", keywords: ["site", "app", "application", "technique", "bug", "fonctionnalité", "react", "api"] },
+  { agentId: "dirArt", keywords: ["design", "visuel", "charte", "branding", "maquette", "identité"] },
+  { agentId: "dirConseil", keywords: ["planning", "cadrage", "atelier", "roadmap", "projet"] },
+];
+
+function routeObjectiveToLead(task) {
+  const text = (task || "").toLowerCase();
+  for (const rule of ROUTING_RULES) {
+    if (rule.keywords.some((keyword) => text.includes(keyword))) {
+      return rule.agentId;
+    }
+  }
+  return "ceo";
+}
+
+function buildExecutionPlan(agentId, task) {
+  const text = (task || "").toLowerCase();
+
+  if (agentId === "dirCom") {
+    const plan = [
+      {
+        agentId: "dirCom",
+        task: `Tu es responsable de mission. Reformule l'objectif, définis la stratégie de communication, les critères de succès et ce que ton équipe doit produire pour répondre à cette demande : ${task}`,
+        kind: "strategy",
+      },
+      {
+        agentId: "chargeCom",
+        task: `À partir de la stratégie validée par le directeur de la communication, prépare le plan opérationnel détaillé : formats, calendrier, canaux, nombre de contenus, séquençage et consignes d'exécution pour cette demande : ${task}`,
+        kind: "production",
+      },
+    ];
+
+    if (text.includes("linkedin") || text.includes("post") || text.includes("contenu")) {
+      plan.push({
+        agentId: "contentWriter",
+        task: `Rédige les contenus finaux ou brouillons des publications à partir du plan validé. Fournis un texte concret, structuré et prêt à être relu pour cette demande : ${task}`,
+        kind: "copy",
+      });
+    }
+
+    if (text.includes("linkedin") || text.includes("carrousel") || text.includes("visuel") || text.includes("design")) {
+      plan.push({
+        agentId: "graphiste",
+        task: `Propose la direction créative finale à partir du contenu et du plan : format, structure des slides/posts, style visuel, éléments graphiques et indications prêtes à produire pour cette demande : ${task}`,
+        kind: "design",
+      });
+    }
+
+    plan.push({
+      agentId: "dirCom",
+      task: `Tu es en validation finale. Vérifie que la stratégie, le contenu et le design répondent bien à l'objectif initial. Si quelque chose manque, signale-le clairement. Sinon, livre une synthèse finale prête pour le donneur d'ordre pour cette demande : ${task}`,
+      kind: "final_validation",
+    });
+
+    return plan;
+  }
+
+  if (agentId === "dirOffres") {
+    return [
+      { agentId: "dirOffres", task: `Cadre stratégiquement cette demande et définis les livrables nécessaires : ${task}`, kind: "strategy" },
+      { agentId: "analyste", task: `Apporte les éléments marché, concurrents et opportunités pour cette demande : ${task}`, kind: "analysis" },
+      { agentId: "concepteurOffre", task: `Formalise la proposition concrète, claire et structurée pour cette demande : ${task}`, kind: "production" },
+      { agentId: "dirOffres", task: `Valide la cohérence et livre la version finale pour cette demande : ${task}`, kind: "final_validation" },
+    ];
+  }
+
+  if (agentId === "leadDev") {
+    return [
+      { agentId: "leadDev", task: `Cadre techniquement l'objectif, découpe le travail et définis les critères de réussite : ${task}`, kind: "strategy" },
+      { agentId: "devFront", task: `Traite la partie interface ou expérience visible si nécessaire pour cette demande : ${task}`, kind: "production" },
+      { agentId: "devBack", task: `Traite la partie logique, données ou backend si nécessaire pour cette demande : ${task}`, kind: "production" },
+      { agentId: "testeur", task: `Valide les risques, bugs, points de vigilance ou cas de test pour cette demande : ${task}`, kind: "validation" },
+      { agentId: "leadDev", task: `Fais la validation technique finale et livre une synthèse finale pour cette demande : ${task}`, kind: "final_validation" },
+    ];
+  }
+
+  if (agentId === "dirVentes") {
+    return [
+      { agentId: "dirVentes", task: `Cadre commercialement cette demande et définis la stratégie d'approche : ${task}`, kind: "strategy" },
+      { agentId: "dirTourVentes", task: `Découpe le plan de prospection ou de vente et organise les étapes pour cette demande : ${task}`, kind: "production" },
+      { agentId: "leadChecker", task: `Identifie les leads, cibles ou segments les plus pertinents pour cette demande : ${task}`, kind: "analysis" },
+      { agentId: "vendeur", task: `Prépare le discours, la prise de contact ou la proposition commerciale pour cette demande : ${task}`, kind: "production" },
+      { agentId: "dirVentes", task: `Valide la cohérence finale et livre la réponse commerciale pour cette demande : ${task}`, kind: "final_validation" },
+    ];
+  }
+
+  return [
+    { agentId, task: `Cadre cette demande, organise le travail de ton équipe si nécessaire, puis livre une réponse finale alignée avec l'objectif : ${task}`, kind: "strategy" },
+  ];
+}
+
 const ST = {
   card: { background: "#fff", borderRadius: 20, border: "1px solid #F0E8DB", boxShadow: "0 4px 20px rgba(120,90,50,0.05)" },
   input: { width: "100%", background: "#FBF6EE", border: "1.5px solid #EFE7DA", borderRadius: 12, padding: "11px 13px", fontFamily: "Nunito, sans-serif", fontSize: 16, color: "#3D3A4E", lineHeight: 1.5 },
@@ -1020,7 +1116,7 @@ function BilanScreen({ kpis, activity, leaderboard, maxAct }) {
   );
 }
 
-function MissionSheet({ target, setTarget, command, setCommand, onSend, onClose }) {
+function MissionSheet({ target, setTarget, routingMode, setRoutingMode, command, setCommand, onSend, onClose }) {
   const a = AGENTS[target];
   return (
     <>
@@ -1032,12 +1128,20 @@ function MissionSheet({ target, setTarget, command, setCommand, onSend, onClose 
           <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: "50%", background: "#fff", border: "1px solid #F0E8DB", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><X size={17} color="#9A93A8" /></button>
         </div>
 
-        <div style={{ fontSize: 12.5, fontWeight: 700, color: "#A89A86", fontFamily: "Nunito, sans-serif", marginBottom: 11 }}>À qui ?</div>
-        <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 14, marginBottom: 6 }}>
+        <div style={{ display: "flex", gap: 6, padding: 4, background: "#fff", border: "1px solid #F0E8DB", borderRadius: 12, marginBottom: 14 }}>
+          {[{ id: "auto", label: "Auto" }, { id: "manual", label: "Manuel" }].map((mode) => (
+            <button key={mode.id} onClick={() => setRoutingMode(mode.id)} style={{ flex: 1, padding: "8px", borderRadius: 9, border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 700, fontFamily: "Nunito, sans-serif", background: routingMode === mode.id ? "#F2785C" : "#fff", color: routingMode === mode.id ? "#fff" : "#9A93A8" }}>
+              {mode.label}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ fontSize: 12.5, fontWeight: 700, color: "#A89A86", fontFamily: "Nunito, sans-serif", marginBottom: 11 }}>{routingMode === "auto" ? "Responsable suggéré" : "À qui ?"}</div>
+        <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 14, marginBottom: 6, opacity: routingMode === "auto" ? 0.7 : 1 }}>
           {Object.keys(AGENTS).map((id) => {
             const ag = AGENTS[id], sel = target === id;
             return (
-              <button key={id} onClick={() => setTarget(id)} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, background: "transparent", border: "none", cursor: "pointer", flexShrink: 0, width: 62, WebkitTapHighlightColor: "transparent" }}>
+              <button key={id} onClick={() => { setTarget(id); setRoutingMode("manual"); }} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, background: "transparent", border: "none", cursor: "pointer", flexShrink: 0, width: 62, WebkitTapHighlightColor: "transparent" }}>
                 <div style={{ borderRadius: "50%", border: `3px solid ${sel ? ag.color : "transparent"}`, padding: 2, transition: "all 0.15s", boxShadow: sel ? `0 4px 14px ${ag.color}45` : "none" }}>
                   <Character id={id} size={48} />
                 </div>
@@ -1050,14 +1154,14 @@ function MissionSheet({ target, setTarget, command, setCommand, onSend, onClose 
         <div style={{ display: "flex", gap: 11, alignItems: "center", padding: "12px 14px", background: `${a.color}12`, border: `1.5px solid ${a.color}35`, borderRadius: 16, marginBottom: 14 }}>
           <Character id={target} size={42} badge />
           <div>
-            <div style={{ fontSize: 14.5, fontWeight: 700, color: a.color, fontFamily: "Fredoka, sans-serif" }}>{a.name} · {a.role}</div>
+            <div style={{ fontSize: 14.5, fontWeight: 700, color: a.color, fontFamily: "Fredoka, sans-serif" }}>{routingMode === "auto" ? "Responsable suggéré" : a.name} · {a.role}</div>
             <div style={{ fontSize: 12, color: "#7A7488", fontFamily: "Nunito, sans-serif", lineHeight: 1.4, marginTop: 2 }}>{a.desc}</div>
           </div>
         </div>
 
         <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 12, marginBottom: 6 }}>
           {QUICK.map((q, i) => (
-            <button key={i} onClick={() => { setTarget(q.target); setCommand(q.cmd); }} style={{ flexShrink: 0, padding: "8px 14px", background: "#fff", border: "1px solid #F0E8DB", borderRadius: 30, color: "#7A7488", fontSize: 12.5, fontFamily: "Nunito, sans-serif", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", WebkitTapHighlightColor: "transparent" }}>{q.label}</button>
+            <button key={i} onClick={() => { setRoutingMode("auto"); setTarget(q.target); setCommand(q.cmd); }} style={{ flexShrink: 0, padding: "8px 14px", background: "#fff", border: "1px solid #F0E8DB", borderRadius: 30, color: "#7A7488", fontSize: 12.5, fontFamily: "Nunito, sans-serif", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", WebkitTapHighlightColor: "transparent" }}>{q.label}</button>
           ))}
         </div>
 
@@ -1092,6 +1196,7 @@ export default function AgencySaaS() {
   const [events, setEvents] = useState([]);
   const [thinking, setThinking] = useState([]);
   const [currentMissionId, setCurrentMissionId] = useState("all");
+  const [routingMode, setRoutingMode] = useState("auto");
 
   const idRef = useRef(0);
   const configRef = useRef(config);
@@ -1235,17 +1340,29 @@ export default function AgencySaaS() {
     if (!command.trim() || processing) return;
     const cmd = command.trim();
     const missionId = currentMissionId !== "all" ? currentMissionId : `mission-${Date.now()}`;
+    const leadAgentId = routingMode === "manual" ? target : routeObjectiveToLead(cmd);
+    const plan = buildExecutionPlan(leadAgentId, cmd);
     setCommand(""); setSheet(false); setTab("missions"); setProcessing(true);
     setCurrentMissionId(missionId);
-    addMsg({ type: "command", target, content: cmd, missionId });
-    addEvent("command_received", target, { cmd });
-    await runAgent(target, cmd, 0, "", missionId);
+    setTarget(leadAgentId);
+    addMsg({ type: "command", target: leadAgentId, content: cmd, missionId });
+    addMsg({ type: "auto_saved", content: `Mission routée vers ${AGENTS[leadAgentId].name}. ${plan.length > 1 ? `${plan.length} étapes prévues.` : "Exécution directe."}`, missionId });
+    addEvent("command_received", leadAgentId, { cmd });
+    for (let i = 0; i < plan.length; i += 1) {
+      const step = plan[i];
+      if (i > 0) {
+        addEvent("delegation", leadAgentId, { to: step.agentId, task: step.task });
+        addMsg({ type: "delegation", from: plan[i - 1].agentId, to: step.agentId, missionId });
+      }
+      await runAgent(step.agentId, step.task, i, "", missionId);
+    }
     setProcessing(false);
-  }, [command, target, processing, addMsg, addEvent, runAgent, currentMissionId]);
+  }, [command, target, processing, addMsg, addEvent, runAgent, currentMissionId, routingMode]);
 
   const handleContinueMission = useCallback((message) => {
     setCurrentMissionId(message.missionId || "all");
     setTarget(message.agentId || message.target || "ceo");
+    setRoutingMode("manual");
     setCommand("");
     setSheet(true);
   }, []);
@@ -1253,6 +1370,7 @@ export default function AgencySaaS() {
   const handleSuggestedAction = useCallback((message, action) => {
     setCurrentMissionId(message.missionId || "all");
     setTarget(action.target);
+    setRoutingMode("manual");
     setCommand(action.cmd);
     setSheet(true);
   }, []);
@@ -1324,7 +1442,7 @@ export default function AgencySaaS() {
 
       {/* Screen */}
       <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
-        {tab === "missions" && <FeedScreen messages={messages} thinking={thinking} expanded={expanded} setExpanded={setExpanded} onQuick={(q) => { setCurrentMissionId("all"); setTarget(q.target); setCommand(q.cmd); setSheet(true); }} onValidate={handleValidate} statuses={statuses} activity={activity} onOpen={(id) => { setTarget(id); setSheet(true); }} currentMissionId={currentMissionId} setCurrentMissionId={setCurrentMissionId} onContinueMission={handleContinueMission} onAction={handleSuggestedAction} />}
+        {tab === "missions" && <FeedScreen messages={messages} thinking={thinking} expanded={expanded} setExpanded={setExpanded} onQuick={(q) => { setCurrentMissionId("all"); setRoutingMode("auto"); setTarget(q.target); setCommand(q.cmd); setSheet(true); }} onValidate={handleValidate} statuses={statuses} activity={activity} onOpen={(id) => { setRoutingMode("manual"); setTarget(id); setSheet(true); }} currentMissionId={currentMissionId} setCurrentMissionId={setCurrentMissionId} onContinueMission={handleContinueMission} onAction={handleSuggestedAction} />}
         {tab === "observatory" && <ObservatoryScreen events={events} thinking={thinking} config={config} />}
         {tab === "company" && <ConfigScreen config={config} updateCompany={updateCompany} updateMetier={updateMetier} saved={saved} decisions={config.decisions || []} />}
         {tab === "bilan" && <BilanScreen kpis={kpis} activity={activity} leaderboard={leaderboard} maxAct={maxAct} />}
@@ -1341,7 +1459,7 @@ export default function AgencySaaS() {
         {TABS.slice(2).map((t) => <NavBtn key={t.id} t={t} active={tab === t.id} onClick={() => setTab(t.id)} />)}
       </div>
 
-      {sheet && <MissionSheet target={target} setTarget={setTarget} command={command} setCommand={setCommand} onSend={handleSend} onClose={() => setSheet(false)} />}
+      {sheet && <MissionSheet target={target} setTarget={setTarget} routingMode={routingMode} setRoutingMode={setRoutingMode} command={command} setCommand={setCommand} onSend={handleSend} onClose={() => setSheet(false)} />}
     </div>
   );
 }
