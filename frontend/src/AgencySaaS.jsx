@@ -422,6 +422,37 @@ function buildSuggestedActions(message) {
   return actions;
 }
 
+function getMissionLabel(message) {
+  return (message?.content || "Mission sans titre").replace(/\s+/g, " ").trim();
+}
+
+function summarizeMission(messages, missionId) {
+  const missionMessages = messages.filter((m) => m.missionId === missionId);
+  const command = missionMessages.find((m) => m.type === "command");
+  const finalResponse = [...missionMessages].reverse().find((m) => m.type === "response" && m.phase === "final_validation");
+  const latestResponse = [...missionMessages].reverse().find((m) => m.type === "response");
+  const archived = missionMessages.some((m) => m.type === "mission_archived");
+
+  return {
+    id: missionId,
+    title: getMissionLabel(command),
+    target: command?.target || latestResponse?.agentId || "ceo",
+    createdAt: command?.ts || missionMessages[0]?.ts || new Date(),
+    updatedAt: missionMessages[missionMessages.length - 1]?.ts || command?.ts || new Date(),
+    command,
+    finalResponse,
+    latestResponse,
+    archived,
+    hasFinalDeliverable: Boolean(finalResponse?.deliverable?.trim() || finalResponse?.content?.trim()),
+    messages: missionMessages,
+  };
+}
+
+function buildMissionList(messages) {
+  const ids = Array.from(new Set(messages.filter((m) => m.missionId).map((m) => m.missionId)));
+  return ids.map((id) => summarizeMission(messages, id)).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+}
+
 const ROUTING_RULES = [
   { agentId: "dirCom", keywords: ["linkedin", "post", "publication", "reseaux", "réseaux", "carrousel", "communication", "contenu"] },
   { agentId: "dirOffres", keywords: ["offre", "pricing", "prix", "proposition de valeur", "pack", "positionnement"] },
@@ -662,7 +693,7 @@ function Typing({ id }) {
   );
 }
 
-function FeedMsg({ m, expanded, setExpanded, onValidate, onContinueMission, onAction }) {
+function FeedMsg({ m, expanded, setExpanded, onValidate, onContinueMission, onAction, compact = false }) {
   const time = m.ts?.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
   if (m.type === "command") {
     const t = AGENTS[m.target];
@@ -715,7 +746,9 @@ function FeedMsg({ m, expanded, setExpanded, onValidate, onContinueMission, onAc
           {m.flags?.includes("VALIDATION_REQUIRED") && <span style={{ fontSize: 10, color: "#E8A33D", background: "#FCF3E1", border: "1px solid #F2DDAE", borderRadius: 20, padding: "2px 9px", fontFamily: "Nunito, sans-serif", fontWeight: 700 }}>À valider</span>}
           {m.flags?.includes("BLOCKER") && <span style={{ fontSize: 10, color: "#E0654E", background: "#FFF1EE", border: "1px solid #FAD4CB", borderRadius: 20, padding: "2px 9px", fontFamily: "Nunito, sans-serif", fontWeight: 700 }}>Bloqué</span>}
         </div>
-        <div style={{ background: "#fff", border: "1px solid #F0E8DB", borderRadius: "16px 16px 16px 5px", padding: "12px 15px", fontSize: 14, lineHeight: 1.6, color: "#4A4658", fontFamily: "Nunito, sans-serif", whiteSpace: "pre-wrap", boxShadow: "0 3px 14px rgba(120,90,50,0.04)" }}>{m.content}</div>
+        <div style={{ background: "#fff", border: "1px solid #F0E8DB", borderRadius: "16px 16px 16px 5px", padding: "12px 15px", fontSize: 14, lineHeight: 1.6, color: "#4A4658", fontFamily: "Nunito, sans-serif", whiteSpace: "pre-wrap", boxShadow: "0 3px 14px rgba(120,90,50,0.04)" }}>
+          {compact ? `${(m.content || "").slice(0, 220)}${(m.content || "").length > 220 ? "…" : ""}` : m.content}
+        </div>
         {m.extractions && m.extractions.length > 0 && (
           <div style={{ marginTop: 9, padding: "10px 13px", background: "#F0F9FF", border: "1px solid #BAE6FD", borderRadius: 12 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: "#0369A1", fontFamily: "Nunito, sans-serif", marginBottom: 7 }}>Extractions détectées à valider :</div>
@@ -742,7 +775,7 @@ function FeedMsg({ m, expanded, setExpanded, onValidate, onContinueMission, onAc
             {expanded === m.id && <div style={{ marginTop: 9, fontSize: 13.5, lineHeight: 1.6, color: "#5A5568", fontFamily: "Nunito, sans-serif", whiteSpace: "pre-wrap" }}>{m.deliverable}</div>}
           </button>
         )}
-        {(m.type === "response" || m.type === "command") && (
+        {!compact && (m.type === "response" || m.type === "command") && m.phase === "final_validation" && (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
             <button onClick={() => onContinueMission(m)} style={{ padding: "8px 12px", borderRadius: 20, border: "1px solid #F0E8DB", background: "#fff", color: "#7A7488", fontSize: 12.5, fontFamily: "Nunito, sans-serif", fontWeight: 700, cursor: "pointer" }}>
               Continuer cette mission
@@ -774,104 +807,138 @@ function SectionCard({ icon: Icon, color, title, hint, children }) {
   );
 }
 
-function FeedScreen({ messages, thinking, expanded, setExpanded, onQuick, onValidate, statuses, activity, onOpen, currentMissionId, setCurrentMissionId, onContinueMission, onAction }) {
-  const [mode, setMode] = useState("feed");
-  const ref = useRef(null);
-  useEffect(() => { if (ref.current && mode === "feed") ref.current.scrollTop = ref.current.scrollHeight; }, [messages, thinking, mode]);
-  const missionCommands = messages.filter((m) => m.type === "command").slice().reverse();
-  const filteredMessages = currentMissionId === "all" ? messages : messages.filter((m) => m.missionId === currentMissionId);
-  
-  if (mode === "team") {
-    return (
-      <div style={{ height: "100%", overflowY: "auto", padding: "14px 16px 18px", display: "flex", flexDirection: "column" }}>
-        <div style={{ display: "flex", gap: 6, padding: 4, background: "#fff", border: "1px solid #F0E8DB", borderRadius: 12, marginBottom: 14, flexShrink: 0 }}>
-          {[{ id: "feed", label: "Feed" }, { id: "team", label: "Équipe" }].map((m) => (
-            <button key={m.id} onClick={() => setMode(m.id)} style={{ flex: 1, padding: "8px", borderRadius: 9, border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 700, fontFamily: "Nunito, sans-serif", background: mode === m.id ? "#F2785C" : "#fff", color: mode === m.id ? "#fff" : "#9A93A8", WebkitTapHighlightColor: "transparent" }}>{m.label}</button>
-          ))}
-        </div>
-        <div style={{ flex: 1, overflowY: "auto" }}>
-          <div style={{ fontSize: 13.5, color: "#9A93A8", fontFamily: "Nunito, sans-serif", marginBottom: 18, textAlign: "center", lineHeight: 1.5 }}>Les {Object.keys(AGENTS).length} membres de votre équipe.</div>
-          {DEPARTMENTS.map((dept) => (
-            <div key={dept.name} style={{ marginBottom: 22 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 12 }}>
-                <span style={{ width: 9, height: 9, borderRadius: "50%", background: dept.color }} />
-                <span style={{ fontSize: 15, fontWeight: 600, color: "#3D3A4E", fontFamily: "Fredoka, sans-serif" }}>{dept.name}</span>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-                {dept.agents.map((id) => {
-                  const a = AGENTS[id], c = activity[id] || 0;
-                  return (
-                    <button key={id} onClick={() => onOpen(id)} style={{ ...ST.card, display: "flex", alignItems: "center", gap: 13, padding: "11px 13px", cursor: "pointer", textAlign: "left", WebkitTapHighlightColor: "transparent" }}>
-                      <Character id={id} size={50} status={statuses[id]} badge />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                          <span style={{ fontSize: 15, fontWeight: 700, color: "#3D3A4E", fontFamily: "Fredoka, sans-serif" }}>{a.name}</span>
-                          {c > 0 && <span style={{ fontSize: 10.5, color: a.color, background: `${a.color}18`, borderRadius: 20, padding: "1px 8px", fontFamily: "Nunito, sans-serif", fontWeight: 700 }}>{c}</span>}
-                        </div>
-                        <div style={{ fontSize: 11.5, color: a.color, fontFamily: "Nunito, sans-serif", fontWeight: 600, marginBottom: 2 }}>{a.role}</div>
-                        <div style={{ fontSize: 12, color: "#9A93A8", fontFamily: "Nunito, sans-serif", lineHeight: 1.4 }}>{a.desc}</div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
+function MissionListItem({ mission, selected, onOpen }) {
+  const agent = AGENTS[mission.target];
+  return (
+    <button onClick={() => onOpen(mission.id)} style={{ ...ST.card, width: "100%", padding: 14, marginBottom: 10, textAlign: "left", cursor: "pointer" }}>
+      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+        <Character id={mission.target} size={44} badge />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+            <span style={{ fontSize: 14.5, fontWeight: 700, color: "#3D3A4E", fontFamily: "Fredoka, sans-serif", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{mission.title}</span>
+            {selected && <span style={{ fontSize: 10.5, color: "#F2785C", background: "#FFF1EC", borderRadius: 20, padding: "2px 7px", fontFamily: "Nunito, sans-serif", fontWeight: 700 }}>Ouverte</span>}
+          </div>
+          <div style={{ fontSize: 11.5, color: agent.color, fontFamily: "Nunito, sans-serif", fontWeight: 700, marginBottom: 4 }}>{agent.name} · {agent.role}</div>
+          <div style={{ fontSize: 12, color: "#9A93A8", fontFamily: "Nunito, sans-serif", lineHeight: 1.4 }}>
+            {mission.finalResponse ? "Livrable final prêt" : "Travail en cours"} · {new Date(mission.updatedAt).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+          </div>
         </div>
       </div>
-    );
-  }
+    </button>
+  );
+}
+
+function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueMission, onAction, onArchive, onBack }) {
+  const finalResponse = mission.finalResponse || mission.latestResponse;
+  const processMessages = mission.messages.filter((m) => m.type !== "command" && m.id !== finalResponse?.id && m.type !== "mission_archived");
+  const [showProcess, setShowProcess] = useState(false);
 
   return (
-    <div style={{ height: "100%", overflowY: "auto", padding: "14px 16px 18px", display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", gap: 6, padding: 4, background: "#fff", border: "1px solid #F0E8DB", borderRadius: 12, marginBottom: 14, flexShrink: 0 }}>
-        {[{ id: "feed", label: "Feed" }, { id: "team", label: "Équipe" }].map((m) => (
-          <button key={m.id} onClick={() => setMode(m.id)} style={{ flex: 1, padding: "8px", borderRadius: 9, border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 700, fontFamily: "Nunito, sans-serif", background: mode === m.id ? "#F2785C" : "#fff", color: mode === m.id ? "#fff" : "#9A93A8", WebkitTapHighlightColor: "transparent" }}>{m.label}</button>
-        ))}
-      </div>
-      <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 10, marginBottom: 8, flexShrink: 0 }}>
-        <button onClick={() => setCurrentMissionId("all")} style={{ flexShrink: 0, padding: "8px 12px", borderRadius: 20, border: "1px solid #F0E8DB", background: currentMissionId === "all" ? "#F2785C" : "#fff", color: currentMissionId === "all" ? "#fff" : "#7A7488", fontSize: 12.5, fontFamily: "Nunito, sans-serif", fontWeight: 700, cursor: "pointer" }}>
-          Toutes les missions
-        </button>
-        {missionCommands.map((m) => (
-          <button key={m.missionId || m.id} onClick={() => setCurrentMissionId(m.missionId)} style={{ flexShrink: 0, padding: "8px 12px", borderRadius: 20, border: "1px solid #F0E8DB", background: currentMissionId === m.missionId ? "#F2785C" : "#fff", color: currentMissionId === m.missionId ? "#fff" : "#7A7488", fontSize: 12.5, fontFamily: "Nunito, sans-serif", fontWeight: 700, cursor: "pointer", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {m.content}
-          </button>
-        ))}
-      </div>
-      <div ref={ref} style={{ flex: 1, overflowY: "auto" }}>
-        {filteredMessages.length === 0 ? (
-          <div style={{ padding: "20px 0" }}>
-            <div style={{ textAlign: "center", marginBottom: 22 }}>
-              <div style={{ display: "flex", justifyContent: "center", marginBottom: 14 }}>
-                {["ceo", "dirArt", "leadDev", "dirVentes"].map((id, i) => (
-                  <div key={id} style={{ marginLeft: i ? -12 : 0, border: "3px solid #FBF6EE", borderRadius: "50%" }}><Character id={id} size={52} /></div>
-                ))}
-              </div>
-              <div style={{ fontSize: 21, fontWeight: 700, color: "#3D3A4E", fontFamily: "Fredoka, sans-serif", marginBottom: 6 }}>Votre équipe est prête !</div>
-              <div style={{ fontSize: 14, color: "#9A93A8", fontFamily: "Nunito, sans-serif", lineHeight: 1.5 }}>Confiez-lui une mission. Vos collaborateurs s'organisent ensuite tout seuls.</div>
-            </div>
-            <div style={{ fontSize: 12, fontWeight: 700, color: "#A89A86", fontFamily: "Nunito, sans-serif", marginBottom: 10 }}>Quelques idées</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {QUICK.map((q, i) => (
-                <button key={i} onClick={() => onQuick(q)} style={{ ...ST.card, display: "flex", alignItems: "center", gap: 13, padding: "12px 14px", cursor: "pointer", textAlign: "left", WebkitTapHighlightColor: "transparent" }}>
-                  <Character id={q.target} size={44} badge />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 14.5, fontWeight: 700, color: "#3D3A4E", fontFamily: "Fredoka, sans-serif" }}>{q.label}</div>
-                    <div style={{ fontSize: 12, color: "#9A93A8", fontFamily: "Nunito, sans-serif", marginTop: 1 }}>{AGENTS[q.target].name}</div>
-                  </div>
-                  <ChevronRight size={18} color="#D8CDBD" />
-                </button>
-              ))}
+    <div style={{ height: "100%", overflowY: "auto", padding: "14px 16px 18px" }}>
+      <button onClick={onBack} style={{ marginBottom: 12, border: "none", background: "transparent", color: "#9A93A8", fontSize: 12.5, fontWeight: 700, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
+        ← Retour aux missions
+      </button>
+      <div style={{ ...ST.card, padding: 16, marginBottom: 12 }}>
+        <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 10 }}>
+          <Character id={mission.target} size={48} badge />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 17, fontWeight: 700, color: "#3D3A4E", fontFamily: "Fredoka, sans-serif" }}>{mission.title}</div>
+            <div style={{ fontSize: 12, color: "#9A93A8", fontFamily: "Nunito, sans-serif" }}>
+              {mission.archived ? "Mission archivée" : "Mission en cours"} · {new Date(mission.updatedAt).toLocaleString("fr-FR")}
             </div>
           </div>
-        ) : (
-          <div>
-            {filteredMessages.map((m) => <FeedMsg key={m.id} m={m} expanded={expanded} setExpanded={setExpanded} onValidate={onValidate} onContinueMission={onContinueMission} onAction={onAction} />)}
-            {thinking.map((id) => <Typing key={"t" + id} id={id} />)}
+        </div>
+        {mission.command && (
+          <div style={{ background: "#FBF6EE", borderRadius: 14, padding: "12px 14px", fontSize: 13.5, color: "#5A5568", fontFamily: "Nunito, sans-serif", lineHeight: 1.5 }}>
+            {mission.command.content}
           </div>
         )}
       </div>
+
+      {finalResponse ? (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 13, color: "#A89A86", fontFamily: "Nunito, sans-serif", fontWeight: 700, marginBottom: 8 }}>Réponse finale</div>
+          <FeedMsg m={finalResponse} expanded={expanded} setExpanded={setExpanded} onValidate={onValidate} onContinueMission={onContinueMission} onAction={onAction} />
+        </div>
+      ) : (
+        <div style={{ ...ST.card, padding: 16, marginBottom: 12, fontSize: 13.5, color: "#9A93A8", fontFamily: "Nunito, sans-serif" }}>
+          L'équipe travaille encore. Le livrable final n'a pas encore été validé.
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        {!mission.archived && (
+          <button onClick={() => onArchive(mission.id)} disabled={!mission.hasFinalDeliverable} style={{ flex: 1, padding: "11px 14px", borderRadius: 14, border: "none", background: mission.hasFinalDeliverable ? "linear-gradient(135deg, #5BC77F, #42B76B)" : "#EDE4D5", color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: mission.hasFinalDeliverable ? "pointer" : "not-allowed" }}>
+            Terminer et archiver
+          </button>
+        )}
+        <button onClick={() => onContinueMission(finalResponse || mission.command)} style={{ flex: 1, padding: "11px 14px", borderRadius: 14, border: "1px solid #F0E8DB", background: "#fff", color: "#7A7488", fontSize: 13, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
+          Donner un retour
+        </button>
+      </div>
+
+      <button onClick={() => setShowProcess((p) => !p)} style={{ width: "100%", marginBottom: 12, padding: "12px 14px", borderRadius: 14, border: "1px solid #F0E8DB", background: "#fff", color: "#7A7488", fontSize: 13, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer", textAlign: "left" }}>
+        {showProcess ? "Masquer" : "Voir"} le process interne ({processMessages.length})
+      </button>
+
+      {showProcess && (
+        <div>
+          {processMessages.map((m) => <FeedMsg key={m.id} m={m} compact expanded={expanded} setExpanded={setExpanded} onValidate={onValidate} onContinueMission={onContinueMission} onAction={onAction} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MissionsScreen({ messages, expanded, setExpanded, onQuick, onValidate, onContinueMission, onAction, selectedMissionId, setSelectedMissionId, onArchiveMission }) {
+  const [segment, setSegment] = useState("active");
+  const missions = buildMissionList(messages);
+  const activeMissions = missions.filter((m) => !m.archived);
+  const archivedMissions = missions.filter((m) => m.archived);
+  const displayed = segment === "active" ? activeMissions : archivedMissions;
+  const selectedMission = missions.find((m) => m.id === selectedMissionId);
+
+  if (selectedMission) {
+    return <MissionDetail mission={selectedMission} expanded={expanded} setExpanded={setExpanded} onValidate={onValidate} onContinueMission={onContinueMission} onAction={onAction} onArchive={onArchiveMission} onBack={() => setSelectedMissionId(null)} />;
+  }
+
+  return (
+    <div style={{ height: "100%", overflowY: "auto", padding: "14px 16px 18px" }}>
+      <div style={{ display: "flex", gap: 6, padding: 4, background: "#fff", border: "1px solid #F0E8DB", borderRadius: 12, marginBottom: 14 }}>
+        {[{ id: "active", label: "En cours" }, { id: "archived", label: "Archivé" }].map((seg) => (
+          <button key={seg.id} onClick={() => setSegment(seg.id)} style={{ flex: 1, padding: "8px", borderRadius: 9, border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 700, fontFamily: "Nunito, sans-serif", background: segment === seg.id ? "#F2785C" : "#fff", color: segment === seg.id ? "#fff" : "#9A93A8" }}>
+            {seg.label}
+          </button>
+        ))}
+      </div>
+
+      {displayed.length === 0 ? (
+        <div style={{ padding: "20px 0" }}>
+          <div style={{ textAlign: "center", marginBottom: 22 }}>
+            <div style={{ fontSize: 21, fontWeight: 700, color: "#3D3A4E", fontFamily: "Fredoka, sans-serif", marginBottom: 6 }}>{segment === "active" ? "Aucune mission en cours" : "Aucune mission archivée"}</div>
+            <div style={{ fontSize: 14, color: "#9A93A8", fontFamily: "Nunito, sans-serif", lineHeight: 1.5 }}>{segment === "active" ? "Lance une nouvelle mission et l'outil choisira automatiquement la meilleure équipe." : "Les missions terminées apparaîtront ici."}</div>
+          </div>
+          {segment === "active" && (
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#A89A86", fontFamily: "Nunito, sans-serif", marginBottom: 10 }}>Idées de départ</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {QUICK.map((q, i) => (
+                  <button key={i} onClick={() => onQuick(q)} style={{ ...ST.card, display: "flex", alignItems: "center", gap: 13, padding: "12px 14px", cursor: "pointer", textAlign: "left" }}>
+                    <Character id={q.target} size={44} badge />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 14.5, fontWeight: 700, color: "#3D3A4E", fontFamily: "Fredoka, sans-serif" }}>{q.label}</div>
+                      <div style={{ fontSize: 12, color: "#9A93A8", fontFamily: "Nunito, sans-serif", marginTop: 1 }}>L'app choisira ensuite automatiquement les meilleurs experts</div>
+                    </div>
+                    <ChevronRight size={18} color="#D8CDBD" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        displayed.map((mission) => <MissionListItem key={mission.id} mission={mission} onOpen={setSelectedMissionId} />)
+      )}
     </div>
   );
 }
@@ -1116,8 +1183,9 @@ function BilanScreen({ kpis, activity, leaderboard, maxAct }) {
   );
 }
 
-function MissionSheet({ target, setTarget, routingMode, setRoutingMode, command, setCommand, onSend, onClose }) {
-  const a = AGENTS[target];
+function MissionSheet({ command, setCommand, onSend, onClose }) {
+  const suggestedLead = routeObjectiveToLead(command);
+  const a = AGENTS[suggestedLead];
   return (
     <>
       <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(60,45,30,0.35)", backdropFilter: "blur(2px)", animation: "fadeBg 0.25s ease", zIndex: 10 }} />
@@ -1128,40 +1196,17 @@ function MissionSheet({ target, setTarget, routingMode, setRoutingMode, command,
           <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: "50%", background: "#fff", border: "1px solid #F0E8DB", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><X size={17} color="#9A93A8" /></button>
         </div>
 
-        <div style={{ display: "flex", gap: 6, padding: 4, background: "#fff", border: "1px solid #F0E8DB", borderRadius: 12, marginBottom: 14 }}>
-          {[{ id: "auto", label: "Auto" }, { id: "manual", label: "Manuel" }].map((mode) => (
-            <button key={mode.id} onClick={() => setRoutingMode(mode.id)} style={{ flex: 1, padding: "8px", borderRadius: 9, border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 700, fontFamily: "Nunito, sans-serif", background: routingMode === mode.id ? "#F2785C" : "#fff", color: routingMode === mode.id ? "#fff" : "#9A93A8" }}>
-              {mode.label}
-            </button>
-          ))}
-        </div>
-
-        <div style={{ fontSize: 12.5, fontWeight: 700, color: "#A89A86", fontFamily: "Nunito, sans-serif", marginBottom: 11 }}>{routingMode === "auto" ? "Responsable suggéré" : "À qui ?"}</div>
-        <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 14, marginBottom: 6, opacity: routingMode === "auto" ? 0.7 : 1 }}>
-          {Object.keys(AGENTS).map((id) => {
-            const ag = AGENTS[id], sel = target === id;
-            return (
-              <button key={id} onClick={() => { setTarget(id); setRoutingMode("manual"); }} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, background: "transparent", border: "none", cursor: "pointer", flexShrink: 0, width: 62, WebkitTapHighlightColor: "transparent" }}>
-                <div style={{ borderRadius: "50%", border: `3px solid ${sel ? ag.color : "transparent"}`, padding: 2, transition: "all 0.15s", boxShadow: sel ? `0 4px 14px ${ag.color}45` : "none" }}>
-                  <Character id={id} size={48} />
-                </div>
-                <span style={{ fontSize: 10.5, color: sel ? "#3D3A4E" : "#9A93A8", fontWeight: sel ? 700 : 600, fontFamily: "Nunito, sans-serif", textAlign: "center", lineHeight: 1.1 }}>{ag.name}</span>
-              </button>
-            );
-          })}
-        </div>
-
         <div style={{ display: "flex", gap: 11, alignItems: "center", padding: "12px 14px", background: `${a.color}12`, border: `1.5px solid ${a.color}35`, borderRadius: 16, marginBottom: 14 }}>
-          <Character id={target} size={42} badge />
+          <Character id={suggestedLead} size={42} badge />
           <div>
-            <div style={{ fontSize: 14.5, fontWeight: 700, color: a.color, fontFamily: "Fredoka, sans-serif" }}>{routingMode === "auto" ? "Responsable suggéré" : a.name} · {a.role}</div>
+            <div style={{ fontSize: 14.5, fontWeight: 700, color: a.color, fontFamily: "Fredoka, sans-serif" }}>Responsable suggéré · {a.role}</div>
             <div style={{ fontSize: 12, color: "#7A7488", fontFamily: "Nunito, sans-serif", lineHeight: 1.4, marginTop: 2 }}>{a.desc}</div>
           </div>
         </div>
 
         <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 12, marginBottom: 6 }}>
           {QUICK.map((q, i) => (
-            <button key={i} onClick={() => { setRoutingMode("auto"); setTarget(q.target); setCommand(q.cmd); }} style={{ flexShrink: 0, padding: "8px 14px", background: "#fff", border: "1px solid #F0E8DB", borderRadius: 30, color: "#7A7488", fontSize: 12.5, fontFamily: "Nunito, sans-serif", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", WebkitTapHighlightColor: "transparent" }}>{q.label}</button>
+            <button key={i} onClick={() => setCommand(q.cmd)} style={{ flexShrink: 0, padding: "8px 14px", background: "#fff", border: "1px solid #F0E8DB", borderRadius: 30, color: "#7A7488", fontSize: 12.5, fontFamily: "Nunito, sans-serif", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", WebkitTapHighlightColor: "transparent" }}>{q.label}</button>
           ))}
         </div>
 
@@ -1195,8 +1240,7 @@ export default function AgencySaaS() {
   const [saved, setSaved] = useState(true);
   const [events, setEvents] = useState([]);
   const [thinking, setThinking] = useState([]);
-  const [currentMissionId, setCurrentMissionId] = useState("all");
-  const [routingMode, setRoutingMode] = useState("auto");
+  const [selectedMissionId, setSelectedMissionId] = useState(null);
 
   const idRef = useRef(0);
   const configRef = useRef(config);
@@ -1281,7 +1325,7 @@ export default function AgencySaaS() {
   const updateCompany = useCallback((key, value) => setConfig((p) => ({ ...p, company: { ...p.company, [key]: value } })), []);
   const updateMetier = useCallback((mid, key, value) => setConfig((p) => ({ ...p, metiers: { ...p.metiers, [mid]: { ...(p.metiers[mid] || {}), [key]: value } } })), []);
 
-  const runAgent = useCallback(async (agentId, task, depth, context, missionId) => {
+  const runAgent = useCallback(async (agentId, task, depth, context, missionId, phase = "step") => {
     if (depth > 3 || !AGENTS[agentId]) return;
     
     setStatus(agentId, "thinking");
@@ -1304,10 +1348,11 @@ export default function AgencySaaS() {
         extractions = extractFromLivrable(res.deliverable, agentId);
       }
 
-      addMsg({ type: "response", agentId, content: res.response, deliverable: res.deliverable, flags: res.flags || [], depth, extractions, missionId });
+      const finalDeliverable = phase === "final_validation" ? (res.deliverable?.trim() ? res.deliverable : res.response) : res.deliverable;
+      addMsg({ type: "response", agentId, content: res.response, deliverable: finalDeliverable, flags: res.flags || [], depth, extractions, missionId, phase });
 
-      if (res.deliverable?.trim()) {
-        setKpis((p) => ({ ...p, deliverables: [...p.deliverables, { agentId, content: res.deliverable, ts: new Date(), task }] }));
+      if (finalDeliverable?.trim()) {
+        setKpis((p) => ({ ...p, deliverables: [...p.deliverables, { agentId, content: finalDeliverable, ts: new Date(), task }] }));
         
         // Auto-save extractions with VALIDATION flag
         extractions.forEach((ex) => {
@@ -1323,7 +1368,7 @@ export default function AgencySaaS() {
             await new Promise((r) => setTimeout(r, 350));
             addEvent("delegation", agentId, { to: d.agentId, task: d.task });
             addMsg({ type: "delegation", from: agentId, to: d.agentId, missionId });
-            await runAgent(d.agentId, d.task, depth + 1, res.response, missionId);
+            await runAgent(d.agentId, d.task, depth + 1, res.response, missionId, "step");
           }
         }
       }
@@ -1339,12 +1384,11 @@ export default function AgencySaaS() {
   const handleSend = useCallback(async () => {
     if (!command.trim() || processing) return;
     const cmd = command.trim();
-    const missionId = currentMissionId !== "all" ? currentMissionId : `mission-${Date.now()}`;
-    const leadAgentId = routingMode === "manual" ? target : routeObjectiveToLead(cmd);
+    const missionId = selectedMissionId || `mission-${Date.now()}`;
+    const leadAgentId = routeObjectiveToLead(cmd);
     const plan = buildExecutionPlan(leadAgentId, cmd);
     setCommand(""); setSheet(false); setTab("missions"); setProcessing(true);
-    setCurrentMissionId(missionId);
-    setTarget(leadAgentId);
+    setSelectedMissionId(missionId);
     addMsg({ type: "command", target: leadAgentId, content: cmd, missionId });
     addMsg({ type: "auto_saved", content: `Mission routée vers ${AGENTS[leadAgentId].name}. ${plan.length > 1 ? `${plan.length} étapes prévues.` : "Exécution directe."}`, missionId });
     addEvent("command_received", leadAgentId, { cmd });
@@ -1354,26 +1398,27 @@ export default function AgencySaaS() {
         addEvent("delegation", leadAgentId, { to: step.agentId, task: step.task });
         addMsg({ type: "delegation", from: plan[i - 1].agentId, to: step.agentId, missionId });
       }
-      await runAgent(step.agentId, step.task, i, "", missionId);
+      await runAgent(step.agentId, step.task, i, "", missionId, step.kind);
     }
     setProcessing(false);
-  }, [command, target, processing, addMsg, addEvent, runAgent, currentMissionId, routingMode]);
+  }, [command, processing, addMsg, addEvent, runAgent, selectedMissionId]);
 
   const handleContinueMission = useCallback((message) => {
-    setCurrentMissionId(message.missionId || "all");
-    setTarget(message.agentId || message.target || "ceo");
-    setRoutingMode("manual");
+    setSelectedMissionId(message.missionId || null);
     setCommand("");
     setSheet(true);
   }, []);
 
   const handleSuggestedAction = useCallback((message, action) => {
-    setCurrentMissionId(message.missionId || "all");
-    setTarget(action.target);
-    setRoutingMode("manual");
+    setSelectedMissionId(message.missionId || null);
     setCommand(action.cmd);
     setSheet(true);
   }, []);
+
+  const handleArchiveMission = useCallback((missionId) => {
+    addMsg({ type: "mission_archived", missionId, content: "Mission archivée" });
+    setSelectedMissionId(null);
+  }, [addMsg]);
 
   const handleValidate = (msgId, exIdx, approved) => {
     const msg = messages.find((m) => m.id === msgId);
@@ -1400,7 +1445,7 @@ export default function AgencySaaS() {
 
   const TABS = [
     { id: "missions", icon: Home, label: "Missions" },
-    { id: "observatory", icon: Eye, label: "Observer" },
+    { id: "team", icon: Users, label: "Équipe" },
     { id: "company", icon: Settings, label: "Réglages" },
     { id: "bilan", icon: BarChart3, label: "Bilan", badge: kpis.deliverables.length + kpis.flags.length },
   ];
@@ -1442,8 +1487,8 @@ export default function AgencySaaS() {
 
       {/* Screen */}
       <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
-        {tab === "missions" && <FeedScreen messages={messages} thinking={thinking} expanded={expanded} setExpanded={setExpanded} onQuick={(q) => { setCurrentMissionId("all"); setRoutingMode("auto"); setTarget(q.target); setCommand(q.cmd); setSheet(true); }} onValidate={handleValidate} statuses={statuses} activity={activity} onOpen={(id) => { setRoutingMode("manual"); setTarget(id); setSheet(true); }} currentMissionId={currentMissionId} setCurrentMissionId={setCurrentMissionId} onContinueMission={handleContinueMission} onAction={handleSuggestedAction} />}
-        {tab === "observatory" && <ObservatoryScreen events={events} thinking={thinking} config={config} />}
+        {tab === "missions" && <MissionsScreen messages={messages} expanded={expanded} setExpanded={setExpanded} onQuick={(q) => { setCommand(q.cmd); setSheet(true); }} onValidate={handleValidate} onContinueMission={handleContinueMission} onAction={handleSuggestedAction} selectedMissionId={selectedMissionId} setSelectedMissionId={setSelectedMissionId} onArchiveMission={handleArchiveMission} />}
+        {tab === "team" && <TeamScreen statuses={statuses} activity={activity} onOpen={() => {}} />}
         {tab === "company" && <ConfigScreen config={config} updateCompany={updateCompany} updateMetier={updateMetier} saved={saved} decisions={config.decisions || []} />}
         {tab === "bilan" && <BilanScreen kpis={kpis} activity={activity} leaderboard={leaderboard} maxAct={maxAct} />}
       </div>
@@ -1459,7 +1504,7 @@ export default function AgencySaaS() {
         {TABS.slice(2).map((t) => <NavBtn key={t.id} t={t} active={tab === t.id} onClick={() => setTab(t.id)} />)}
       </div>
 
-      {sheet && <MissionSheet target={target} setTarget={setTarget} routingMode={routingMode} setRoutingMode={setRoutingMode} command={command} setCommand={setCommand} onSend={handleSend} onClose={() => setSheet(false)} />}
+      {sheet && <MissionSheet command={command} setCommand={setCommand} onSend={handleSend} onClose={() => setSheet(false)} />}
     </div>
   );
 }
