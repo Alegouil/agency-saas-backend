@@ -7,7 +7,7 @@ function setCors(res) {
 
 const WORKSPACE_SLUG = "default";
 const STORAGE_BUCKET = "generated-assets";
-const SUPPORTED_IMAGE_MODELS = new Set(["gpt-image-1", "gpt-image-1-mini", "gpt-image-1.5"]);
+const SUPPORTED_IMAGE_MODELS = new Set(["gpt-image-1", "gpt-image-1-mini", "gpt-image-1.5", "dall-e-3"]);
 
 function getSupabaseConfig() {
   const url = process.env.SUPABASE_URL;
@@ -175,7 +175,9 @@ export default async function handler(req, res) {
       let data;
       let imageBase64 = null;
 
-      if (referenceImages.length > 0) {
+      const supportsReferences = model.startsWith("gpt-image-1");
+
+      if (referenceImages.length > 0 && supportsReferences) {
         const form = new FormData();
         form.append("model", model);
         form.append("prompt", indexedPrompt);
@@ -184,11 +186,10 @@ export default async function handler(req, res) {
         form.append("output_format", "png");
         referenceImages.forEach((image, imageIndex) => {
           const blob = new Blob([image.buffer], { type: image.mimeType });
-          const fieldName = referenceImages.length === 1 ? "image" : "image[]";
-          form.append(fieldName, blob, image.name || `reference-${imageIndex + 1}.png`);
+          form.append("reference_images[]", blob, image.name || `reference-${imageIndex + 1}.png`);
         });
 
-        response = await fetch("https://api.openai.com/v1/images/edits", {
+        response = await fetch("https://api.openai.com/v1/images/generations", {
           method: "POST",
           headers: {
             Authorization: `Bearer ${apiKey}`,
