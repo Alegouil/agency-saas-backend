@@ -7,6 +7,7 @@ function setCors(res) {
 
 const WORKSPACE_SLUG = "default";
 const STORAGE_BUCKET = "generated-assets";
+const SUPPORTED_IMAGE_MODELS = new Set(["gpt-image-1", "gpt-image-1-mini", "gpt-image-1.5"]);
 
 function getSupabaseConfig() {
   const url = process.env.SUPABASE_URL;
@@ -134,7 +135,8 @@ export default async function handler(req, res) {
   }
 
   const apiKey = process.env.OPENAI_API_KEY;
-  const model = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
+  const requestedModel = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
+  const model = SUPPORTED_IMAGE_MODELS.has(requestedModel) ? requestedModel : "gpt-image-1";
   const prompt = String(req.body?.prompt || "").trim();
   const requestedCount = Number(req.body?.count || 1);
   const count = Number.isFinite(requestedCount) ? Math.max(1, Math.min(10, requestedCount)) : 1;

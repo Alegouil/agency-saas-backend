@@ -1601,6 +1601,7 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
   const [openRelayId, setOpenRelayId] = useState(null);
   const messageRefs = useRef({});
   const containerRef = useRef(null);
+  const errorEntries = mission.messages.filter((message) => message.type === "error").slice(-3);
   const readyForReview = Boolean(
     !mission.archived &&
     !isProcessing &&
@@ -1680,6 +1681,27 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
                   </div>
                 )}
               </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {errorEntries.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 13, color: "#A89A86", fontFamily: "Nunito, sans-serif", fontWeight: 700, marginBottom: 8 }}>Points bloquants</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {errorEntries.map((entry) => (
+              <FeedMsg
+                key={entry.id}
+                m={entry}
+                expanded={expanded}
+                setExpanded={setExpanded}
+                onValidate={onValidate}
+                onContinueMission={onContinueMission}
+                onAction={onAction}
+                onOpenAssets={onOpenAssets}
+                messageRef={(node) => { messageRefs.current[entry.id] = node; }}
+              />
             ))}
           </div>
         </div>
