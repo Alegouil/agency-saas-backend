@@ -29,5 +29,5 @@ export default function middleware(request) {
 }
 
 export const config = {
-  matcher: ["/((?!favicon.ico).*)"],
+  matcher: ["/((?!api/|assets/|favicon.ico|manifest.webmanifest).*)"],
 };
