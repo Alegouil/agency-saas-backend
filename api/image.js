@@ -143,6 +143,7 @@ export default async function handler(req, res) {
   const conversationId = sanitizePathSegment(req.body?.conversationId, "default-conversation");
   const messageId = Number.isFinite(Number(req.body?.messageId)) ? Number(req.body.messageId) : null;
   const exactCount = Number.isFinite(Number(req.body?.exactCount)) ? Math.max(1, Math.min(10, Number(req.body.exactCount))) : null;
+  const slideIndex = Number.isFinite(Number(req.body?.slideIndex)) ? Math.max(0, Number(req.body.slideIndex)) : null;
   const referenceImages = Array.isArray(req.body?.references)
     ? req.body.references.map(parseDataUrlAsset).filter(Boolean).slice(0, 2)
     : [];
@@ -168,8 +169,10 @@ export default async function handler(req, res) {
     const images = [];
 
     for (let index = 0; index < count; index += 1) {
-      const indexedPrompt = count > 1 || exactCount
-        ? `${prompt}\n\nConsigne impérative pour cette image : génère uniquement le visuel ${index + 1} sur ${exactCount || count}. Une seule slide ou publication dans l'image. Aucun collage. Aucune mosaïque. Aucune planche de plusieurs slides. Si un brief slide par slide est fourni, utilise uniquement les instructions de la slide ${index + 1}. Garde le meme header, le meme logo, la meme navigation, la meme pagination et le meme footer que sur les autres slides.`
+      const slideNumber = (slideIndex !== null ? slideIndex : index) + 1;
+      const totalSlides = exactCount || count;
+      const indexedPrompt = count > 1 || exactCount || slideIndex !== null
+        ? `${prompt}\n\nConsigne impérative pour cette image : génère uniquement le visuel ${slideNumber} sur ${totalSlides}. Une seule slide ou publication dans l'image. Aucun collage. Aucune mosaïque. Aucune planche de plusieurs slides. Si un brief slide par slide est fourni, utilise uniquement les instructions de la slide ${slideNumber}. Garde le meme header, le meme logo, la meme navigation, la meme pagination et le meme footer que sur les autres slides.`
         : prompt;
       let response;
       let data;
@@ -182,7 +185,7 @@ export default async function handler(req, res) {
         form.append("model", model);
         form.append("prompt", indexedPrompt);
         form.append("size", "1024x1024");
-        form.append("quality", "low");
+        form.append("quality", "high");
         form.append("output_format", "png");
         form.append("input_fidelity", "high");
         referenceImages.forEach((image, imageIndex) => {
@@ -216,7 +219,7 @@ export default async function handler(req, res) {
             prompt: indexedPrompt,
             n: 1,
             size: "1024x1024",
-            quality: "low",
+            quality: "high",
             output_format: "png",
           }),
         });

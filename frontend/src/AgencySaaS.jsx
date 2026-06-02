@@ -1,9 +1,48 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
-  Home, Users, Building2, BarChart3, Plus, X, ArrowUp, ChevronRight, ChevronLeft, Check, Sparkles, Info, Settings, Trash2, Cloud, Eye, AlertCircle, HelpCircle, MessageSquare, TrendingUp, LoaderCircle,
-  Crown, Cog, Palette, Search, Camera, Code, Monitor, Wrench, FlaskConical, Package,
-  ClipboardList, Calendar, Wallet, Map as MapIcon, Target, Heart, Megaphone, Smartphone, Lightbulb, Layers, BarChart3 as ChartIcon, Brain, Zap,
+    AlertCircle,
+    ArrowUp,
+    BarChart3,
+    Brain,
+    Building2,
+    Calendar,
+    Camera,
+    BarChart3 as ChartIcon,
+    Check,
+    ChevronLeft,
+    ChevronRight,
+    ClipboardList,
+    Cloud,
+    Code,
+    Cog,
+    Crown,
+    Eye,
+    FlaskConical,
+    Heart,
+    Home,
+    Info,
+    Layers,
+    Lightbulb,
+    LoaderCircle,
+    Map as MapIcon,
+    Megaphone,
+    Monitor,
+    Package,
+    Palette,
+    Plus,
+    Search,
+    Settings,
+    Smartphone,
+    Sparkles,
+    Target,
+    Trash2,
+    TrendingUp,
+    Users,
+    Wallet,
+    Wrench,
+    X,
+    Zap
 } from "lucide-react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 
 const STORAGE_ENDPOINT = "/api/state";
 const IMAGE_ENDPOINT = "/api/image";
@@ -89,17 +128,18 @@ async function saveRemoteState(patch) {
   return response.json();
 }
 
-async function callImageGenerator(prompt, count = 1, conversationId = null, messageId = null, options = {}) {
+async function requestSingleImage(prompt, conversationId, messageId, references, exactCount, slideIndex) {
   const response = await fetch(IMAGE_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       prompt,
-      count,
+      count: 1,
       conversationId,
       messageId,
-      references: Array.isArray(options.references) ? options.references : [],
-      exactCount: Number.isFinite(options.exactCount) ? options.exactCount : null,
+      references,
+      exactCount,
+      slideIndex,
     }),
   });
 
@@ -109,6 +149,28 @@ async function callImageGenerator(prompt, count = 1, conversationId = null, mess
   }
 
   return response.json();
+}
+
+async function callImageGenerator(prompt, count = 1, conversationId = null, messageId = null, options = {}) {
+  const slideCount = Number.isFinite(count) ? Math.max(1, Math.min(10, count)) : 1;
+  const references = Array.isArray(options.references) ? options.references : [];
+  const exactCount = Number.isFinite(options.exactCount) ? options.exactCount : slideCount;
+
+  if (slideCount === 1) {
+    return requestSingleImage(prompt, conversationId, messageId, references, exactCount, null);
+  }
+
+  // Generate one slide per request so each call stays within the serverless timeout.
+  const images = [];
+  let lastResult = null;
+  for (let slideIndex = 0; slideIndex < slideCount; slideIndex += 1) {
+    const result = await requestSingleImage(prompt, conversationId, messageId, references, exactCount, slideIndex);
+    lastResult = result;
+    const url = result?.imageUrl || result?.images?.[0];
+    if (url) images.push(url);
+  }
+
+  return { ...(lastResult || {}), images, imageUrl: images[0] || null };
 }
 
 const storageAdapter = {
@@ -203,7 +265,7 @@ const AGENTS = {
   dirOffres:       { name: "L'inventeur",    role: "Directeur des offres",    desc: "Imagine offres et prix.",                                                          color: "#B58CE0", Icon: Lightbulb,     skin: 2, hair: 0, hairStyle: "short" },
   analyste:        { name: "L'observateur",  role: "Analyste de marché",      desc: "Étudie marché et tendances.",                                                      color: "#C6A0E8", Icon: ChartIcon,     skin: 3, hair: 4, hairStyle: "long" },
   concepteurOffre: { name: "Le formaliste",  role: "Concepteur d'offres",     desc: "Met en forme offres claires.",                                                      color: "#CDA8E5", Icon: Layers,        skin: 1, hair: 1, hairStyle: "bun" },
-  
+
   // 6 new specialists (Phase 3)
   seaSpec:         { name: "L'adman",        role: "Spécialiste SEA/Ads",     desc: "Optimise les budgets pub et les conversions.",                                      color: "#FF6B9D", Icon: Zap,           skin: 2, hair: 2, hairStyle: "buzz" },
   analyticsEng:    { name: "L'analyste BI",  role: "Analytics Engineer",      desc: "Mesure, dashboards, KPIs.",                                                       color: "#06B6D4", Icon: TrendingUp,    skin: 1, hair: 4, hairStyle: "short" },
@@ -442,7 +504,7 @@ function buildBrief(config, agentId, currentAgents = []) {
 
 async function callAgent(agentId, task, context, brief) {
   const BACKEND_URL = import.meta.env.VITE_API_URL || "/api/llm";
-  
+
   console.log("📡 Calling backend:", BACKEND_URL);
 
   try {
@@ -2358,7 +2420,7 @@ export default function AgencySaaS() {
 
   const runAgent = useCallback(async (agentId, task, depth, context, missionId, phase = "step") => {
     if (depth > 3 || !AGENTS[agentId]) return;
-    
+
     setStatus(agentId, "thinking");
     addEvent("thinking", agentId, { depth });
     addMsg({ type: "progress", agentId, missionId, phase, content: getProgressLabel(agentId, phase) });
@@ -2371,9 +2433,9 @@ export default function AgencySaaS() {
       const res = await callAgent(agentId, task, mergedContext, brief);
 
       addEvent("response", agentId, { response: res.response.substring(0, 150) });
-      
+
       setStatus(agentId, "done");
-      
+
       // Extract from livrable
       let extractions = [];
       if (res.deliverable?.trim()) {
@@ -2404,7 +2466,7 @@ export default function AgencySaaS() {
       if (finalDeliverable?.trim()) {
         const title = extractDeliverableTitle(finalDeliverable, "Livrable");
         setKpis((p) => ({ ...p, deliverables: [...p.deliverables, { missionId, messageId: idRef.current, agentId, title, snippet: buildSnippet(finalDeliverable, title), content: finalDeliverable, ts: new Date(), task, hasAssets: assets.length > 0, assetCount: assets.length, assets }] }));
-        
+
         // Auto-save extractions with VALIDATION flag
         extractions.forEach((ex) => {
           addEvent("auto_saved", agentId, { extraction: ex });
@@ -2588,7 +2650,7 @@ export default function AgencySaaS() {
   const handleValidate = (msgId, exIdx, approved) => {
     const msg = messages.find((m) => m.id === msgId);
     if (!msg || !msg.extractions || !msg.extractions[exIdx]) return;
-    
+
     const ex = msg.extractions[exIdx];
     if (approved) {
       // Apply to config
