@@ -39,11 +39,11 @@ async function saveRemoteState(patch) {
   return response.json();
 }
 
-async function callImageGenerator(prompt, count = 1) {
+async function callImageGenerator(prompt, count = 1, conversationId = null, messageId = null) {
   const response = await fetch(IMAGE_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, count }),
+    body: JSON.stringify({ prompt, count, conversationId, messageId }),
   });
 
   if (!response.ok) {
@@ -615,14 +615,14 @@ function buildDesignerImagePrompt(config, task, response) {
   ].filter(Boolean).join("\n\n");
 }
 
-async function maybeGenerateDesignerAssets(config, agentId, task, phase, response) {
+async function maybeGenerateDesignerAssets(config, agentId, task, phase, response, missionId) {
   if (!shouldGenerateDesignerImage(agentId, phase, task, response)) {
     return [];
   }
 
   try {
     const count = inferImageCount(task, response);
-    const result = await callImageGenerator(buildDesignerImagePrompt(config, task, response), count);
+    const result = await callImageGenerator(buildDesignerImagePrompt(config, task, response), count, missionId, null);
     const images = result?.images?.length ? result.images : (result?.imageUrl ? [result.imageUrl] : []);
     return images.map((url, index) => ({
       kind: "image",
@@ -1895,7 +1895,7 @@ export default function AgencySaaS() {
       if (shouldGenerateDesignerImage(agentId, phase, task, { ...res, deliverable: finalDeliverable })) {
         addMsg({ type: "progress", agentId, missionId, phase: "image_generation", content: getProgressLabel(agentId, "image_generation") });
       }
-      const assets = await maybeGenerateDesignerAssets(configRef.current, agentId, task, phase, { ...res, deliverable: finalDeliverable });
+      const assets = await maybeGenerateDesignerAssets(configRef.current, agentId, task, phase, { ...res, deliverable: finalDeliverable }, missionId);
       addMsg({ type: "response", agentId, content: res.response, deliverable: finalDeliverable, flags: res.flags || [], depth, extractions, missionId, phase, assets });
 
       if (finalDeliverable?.trim()) {

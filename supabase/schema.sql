@@ -18,6 +18,20 @@ create table if not exists public.workspace_state (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.generated_images (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  conversation_id text not null,
+  message_id integer,
+  storage_bucket text not null,
+  storage_path text not null unique,
+  public_url text not null,
+  mime_type text not null default 'image/png',
+  prompt text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
@@ -40,8 +54,15 @@ before update on public.workspace_state
 for each row
 execute function public.set_updated_at();
 
+drop trigger if exists generated_images_set_updated_at on public.generated_images;
+create trigger generated_images_set_updated_at
+before update on public.generated_images
+for each row
+execute function public.set_updated_at();
+
 alter table public.workspaces enable row level security;
 alter table public.workspace_state enable row level security;
+alter table public.generated_images enable row level security;
 
 create policy "service role full access workspaces"
 on public.workspaces
@@ -56,6 +77,17 @@ for all
 to service_role
 using (true)
 with check (true);
+
+create policy "service role full access generated_images"
+on public.generated_images
+for all
+to service_role
+using (true)
+with check (true);
+
+insert into storage.buckets (id, name, public)
+values ('generated-assets', 'generated-assets', true)
+on conflict (id) do nothing;
 
 insert into public.workspaces (slug, name)
 values ('default', 'Workspace par defaut')
