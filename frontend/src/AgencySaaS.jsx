@@ -613,6 +613,22 @@ function deliverableHasImages(deliverable) {
   return Boolean(deliverable?.hasAssets || deliverable?.assetCount || deliverable?.assets?.length || deliverable?.imageUrl);
 }
 
+function buildLatestImageGallery(deliverables = []) {
+  const latestByMission = new Map();
+
+  deliverables.forEach((deliverable) => {
+    if (!deliverableHasImages(deliverable) || !deliverable?.missionId) return;
+    const current = latestByMission.get(deliverable.missionId);
+    const nextTs = new Date(deliverable.ts || 0).getTime();
+    const currentTs = current ? new Date(current.ts || 0).getTime() : 0;
+    if (!current || nextTs >= currentTs) {
+      latestByMission.set(deliverable.missionId, deliverable);
+    }
+  });
+
+  return [...latestByMission.values()].sort((a, b) => new Date(b.ts || 0) - new Date(a.ts || 0));
+}
+
 function shouldGenerateDesignerImage(agentId, phase, task, response) {
   if (!["graphiste", "dirArt"].includes(agentId)) return false;
   const text = `${task || ""}\n${response?.deliverable || ""}\n${response?.response || ""}`.toLowerCase();
@@ -920,7 +936,7 @@ function AssetLightbox({ group, onClose, onReviseAsset = null }) {
   return (
     <>
       <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(35,28,20,0.78)", backdropFilter: "blur(8px)", zIndex: 25 }} />
-      <div style={{ position: "absolute", inset: 0, zIndex: 26, display: "flex", flexDirection: "column", justifyContent: "center", padding: "calc(env(safe-area-inset-top, 0px) + 20px) 16px calc(env(safe-area-inset-bottom, 0px) + 20px)" }}>
+      <div onClick={onClose} style={{ position: "absolute", inset: 0, zIndex: 26, display: "flex", flexDirection: "column", justifyContent: "center", padding: "calc(env(safe-area-inset-top, 0px) + 20px) 16px calc(env(safe-area-inset-bottom, 0px) + 20px)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
           <div style={{ color: "#fff", fontFamily: "Fredoka, sans-serif", fontSize: 16, fontWeight: 600 }}>{asset.alt || "Visuel généré"}</div>
           <button onClick={onClose} style={{ width: 38, height: 38, minWidth: 38, minHeight: 38, borderRadius: "999px", border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.08)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", aspectRatio: "1 / 1" }}>
@@ -928,6 +944,7 @@ function AssetLightbox({ group, onClose, onReviseAsset = null }) {
           </button>
         </div>
         <div
+          onClick={(event) => event.stopPropagation()}
           onTouchStart={(event) => { startX.current = event.touches[0].clientX; }}
           onTouchEnd={(event) => {
             const delta = event.changedTouches[0].clientX - startX.current;
@@ -1754,12 +1771,12 @@ function ConfigScreen({ config, updateCompany, updateMetier, saved, decisions })
 }
 
 function BilanScreen({ kpis, messages, activity, leaderboard, maxAct, onOpenMission }) {
-  const [deliverableFilter, setDeliverableFilter] = useState("all");
+  const [deliverableFilter, setDeliverableFilter] = useState("content");
   const deliverables = [...(kpis.deliverables || [])].reverse();
+  const latestImageGallery = buildLatestImageGallery(kpis.deliverables || []);
   const filteredDeliverables = deliverables.filter((d) => {
-    if (deliverableFilter === "content") return !deliverableHasImages(d);
     if (deliverableFilter === "images") return deliverableHasImages(d);
-    return true;
+    return !deliverableHasImages(d);
   });
 
   return (
@@ -1797,7 +1814,6 @@ function BilanScreen({ kpis, messages, activity, leaderboard, maxAct, onOpenMiss
           <div style={{ fontSize: 15, fontWeight: 600, color: "#3D3A4E", fontFamily: "Fredoka, sans-serif", marginBottom: 12 }}>Documents créés</div>
           <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 10, marginBottom: 8 }}>
             {[
-              { id: "all", label: "Tout" },
               { id: "content", label: "Contenu" },
               { id: "images", label: "Images" },
             ].map((filter) => (
@@ -1806,7 +1822,7 @@ function BilanScreen({ kpis, messages, activity, leaderboard, maxAct, onOpenMiss
               </button>
             ))}
           </div>
-          {filteredDeliverables.map((d, i) => {
+          {deliverableFilter !== "images" && filteredDeliverables.map((d, i) => {
             const a = AGENTS[d.agentId];
             const missionId = resolveDeliverableMissionId(messages, d);
             const messageId = resolveDeliverableMessageId(messages, d);
@@ -1841,6 +1857,34 @@ function BilanScreen({ kpis, messages, activity, leaderboard, maxAct, onOpenMiss
               </button>
             );
           })}
+          {deliverableFilter === "images" && (
+            latestImageGallery.length > 0 ? (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                {latestImageGallery.map((d, i) => {
+                  const missionId = resolveDeliverableMissionId(messages, d);
+                  const messageId = resolveDeliverableMessageId(messages, d);
+                  const title = d.title || extractDeliverableTitle(d.content, "Livrable");
+                  const cover = d.assets?.[0]?.url || d.imageUrl || "";
+                  if (!cover) return null;
+                  return (
+                    <button key={`${d.missionId}-${i}`} onClick={() => missionId && onOpenMission(missionId, messageId)} style={{ ...ST.card, padding: 0, overflow: "hidden", textAlign: "left", cursor: missionId ? "pointer" : "default" }}>
+                      <div style={{ background: "#F7F1E6" }}>
+                        <img src={cover} alt={title} style={{ display: "block", width: "100%", aspectRatio: "4 / 5", objectFit: "cover" }} />
+                      </div>
+                      <div style={{ padding: 10 }}>
+                        <div style={{ fontSize: 12.5, color: "#3D3A4E", fontFamily: "Fredoka, sans-serif", fontWeight: 700, marginBottom: 4 }}>{title}</div>
+                        <div style={{ fontSize: 11, color: "#A89A86", fontFamily: "Nunito, sans-serif" }}>{formatDateTime(d.ts)}</div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div style={{ ...ST.card, padding: 16, fontSize: 13, color: "#9A93A8", fontFamily: "Nunito, sans-serif" }}>
+                Aucune galerie image disponible pour l'instant.
+              </div>
+            )
+          )}
         </div>
       )}
     </div>
