@@ -184,12 +184,13 @@ export default async function handler(req, res) {
         form.append("size", "1024x1024");
         form.append("quality", "low");
         form.append("output_format", "png");
+        form.append("input_fidelity", "high");
         referenceImages.forEach((image, imageIndex) => {
           const blob = new Blob([image.buffer], { type: image.mimeType });
-          form.append("reference_images[]", blob, image.name || `reference-${imageIndex + 1}.png`);
+          form.append("image[]", blob, image.name || `reference-${imageIndex + 1}.png`);
         });
 
-        response = await fetch("https://api.openai.com/v1/images/generations", {
+        response = await fetch("https://api.openai.com/v1/images/edits", {
           method: "POST",
           headers: {
             Authorization: `Bearer ${apiKey}`,
