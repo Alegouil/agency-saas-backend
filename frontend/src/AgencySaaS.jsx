@@ -668,6 +668,7 @@ function buildDesignerImagePrompt(config, task, response) {
   const company = config.company || {};
   const visualStyle = config.metiers?.da || {};
   const comStyle = config.metiers?.com || {};
+  const logoAssets = Array.isArray(visualStyle.logo) ? visualStyle.logo : [];
 
   const brandBits = [
     company.name ? `Entreprise : ${company.name}.` : "",
@@ -677,6 +678,7 @@ function buildDesignerImagePrompt(config, task, response) {
     visualStyle.colors?.length ? `Couleurs : ${visualStyle.colors.join(", ")}.` : "",
     visualStyle.fonts?.length ? `Typographies : ${visualStyle.fonts.join(", ")}.` : "",
     visualStyle.tone ? `Style visuel : ${visualStyle.tone}.` : "",
+    logoAssets.length ? `Des logos de marque sont fournis dans les reglages. Le visuel doit integrer un logo et le conserver de facon persistante sur toutes les slides si c'est un carrousel.` : "",
     comStyle.editorial ? `Ligne éditoriale : ${comStyle.editorial}.` : "",
   ].filter(Boolean);
 
@@ -688,7 +690,9 @@ function buildDesignerImagePrompt(config, task, response) {
     "Évite les blocs de texte trop denses et privilégie une composition forte, claire et éditoriale.",
     "Si plusieurs visuels sont demandés, génère une image autonome par visuel. Jamais de collage, jamais plusieurs publications dans une seule image.",
     carouselLike ? "Pour un carrousel, conserve une structure persistante sur toutes les slides : header, logo, navigation, footer, marges, grille et système typographique cohérents d'une slide à l'autre." : "",
+    carouselLike ? "La pagination, le footer, le header et la position du logo doivent rester constants sur toutes les slides." : "",
     carouselLike ? "Ne change d'une slide à l'autre que le contenu éditorial, l'illustration principale et les accents utiles. L'habillage de base doit rester stable et reconnaissable." : "",
+    carouselLike ? "Respecte strictement le nombre de slides demande dans le brief amont. N'en retire aucune et n'en fusionne aucune." : "",
     task ? `Objectif utilisateur : ${task}` : "",
     response?.deliverable ? `Direction créative à suivre : ${response.deliverable}` : "",
     response?.response ? `Contexte complémentaire : ${response.response}` : "",
@@ -804,7 +808,7 @@ function buildExecutionPlan(agentId, task) {
     if (text.includes("linkedin") || text.includes("carrousel") || text.includes("visuel") || text.includes("design")) {
       plan.push({
         agentId: "graphiste",
-        task: `Propose la direction créative finale à partir du contenu et du plan : format, structure des visuels ou des slides, style visuel, éléments graphiques et indications prêtes à produire pour cette demande : ${task}`,
+        task: `Propose la direction créative finale à partir du contenu et du plan : format, structure des visuels ou des slides, style visuel, éléments graphiques et indications prêtes à produire pour cette demande : ${task}. Respecte strictement le nombre de slides ou visuels déjà définis en amont. Conserve un header, un logo, une navigation, une pagination et un footer persistants sur toute la série.`,
         kind: "design",
       });
     }
@@ -950,9 +954,11 @@ function AssetGallery({ assets = [], onOpen }) {
 function AssetLightbox({ group, onClose, onReviseAsset = null }) {
   const [index, setIndex] = useState(group?.index || 0);
   const startX = useRef(0);
+  const [closing, setClosing] = useState(false);
 
   useEffect(() => {
     setIndex(group?.index || 0);
+    setClosing(false);
   }, [group]);
 
   if (!group?.assets?.length) return null;
@@ -966,13 +972,19 @@ function AssetLightbox({ group, onClose, onReviseAsset = null }) {
     setIndex((current) => Math.max(0, Math.min(assets.length - 1, current + delta)));
   };
 
+  const requestClose = () => {
+    if (closing) return;
+    setClosing(true);
+    setTimeout(() => onClose?.(), 220);
+  };
+
   return (
     <>
-      <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(35,28,20,0.78)", backdropFilter: "blur(8px)", zIndex: 25 }} />
-      <div onClick={onClose} style={{ position: "absolute", inset: 0, zIndex: 26, display: "flex", flexDirection: "column", justifyContent: "center", padding: "calc(env(safe-area-inset-top, 0px) + 20px) 16px calc(env(safe-area-inset-bottom, 0px) + 20px)" }}>
+      <div onClick={requestClose} style={{ position: "absolute", inset: 0, background: "rgba(35,28,20,0.78)", backdropFilter: "blur(8px)", animation: `${closing ? "fadeBgOut" : "fadeBg"} 0.22s ease forwards`, zIndex: 25 }} />
+      <div onClick={requestClose} style={{ position: "absolute", inset: 0, zIndex: 26, display: "flex", flexDirection: "column", justifyContent: "center", padding: "calc(env(safe-area-inset-top, 0px) + 20px) 16px calc(env(safe-area-inset-bottom, 0px) + 20px)", animation: `${closing ? "lightboxOut" : "pop"} 0.22s ease forwards` }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
           <div style={{ color: "#fff", fontFamily: "Fredoka, sans-serif", fontSize: 16, fontWeight: 600 }}>{asset.alt || "Visuel généré"}</div>
-          <button onClick={onClose} style={{ width: 38, height: 38, minWidth: 38, minHeight: 38, borderRadius: "999px", border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.08)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", aspectRatio: "1 / 1" }}>
+          <button onClick={requestClose} style={{ width: 38, height: 38, minWidth: 38, minHeight: 38, borderRadius: "999px", border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.08)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", aspectRatio: "1 / 1" }}>
             <X size={18} />
           </button>
         </div>
@@ -1021,18 +1033,21 @@ function AssetLightbox({ group, onClose, onReviseAsset = null }) {
 
 function ConfirmDialog({ dialog, onCancel, onConfirm }) {
   if (!dialog) return null;
+  const requestCancel = () => {
+    onCancel?.();
+  };
 
   return (
     <>
-      <div onClick={onCancel} style={{ position: "absolute", inset: 0, background: "rgba(60,45,30,0.35)", backdropFilter: "blur(5px)", zIndex: 20 }} />
-      <div style={{ position: "absolute", left: 16, right: 16, bottom: "calc(env(safe-area-inset-bottom, 0px) + 18px)", zIndex: 21, background: "#fff", borderRadius: 26, border: "1px solid #F0E8DB", boxShadow: "0 18px 44px rgba(61,58,78,0.16)", padding: 18 }}>
+      <div onClick={requestCancel} style={{ position: "absolute", inset: 0, background: "rgba(60,45,30,0.35)", backdropFilter: "blur(5px)", animation: "fadeBg 0.22s ease", zIndex: 20 }} />
+      <div style={{ position: "absolute", left: 16, right: 16, bottom: "calc(env(safe-area-inset-bottom, 0px) + 18px)", zIndex: 21, background: "#fff", borderRadius: 26, border: "1px solid #F0E8DB", boxShadow: "0 18px 44px rgba(61,58,78,0.16)", padding: 18, animation: "modalUp 0.22s ease" }}>
         <div style={{ width: 46, height: 46, borderRadius: 16, background: "#FFF1EE", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 12 }}>
           <Trash2 size={20} color="#E0654E" />
         </div>
         <div style={{ fontSize: 18, fontWeight: 700, color: "#3D3A4E", fontFamily: "Fredoka, sans-serif", marginBottom: 6 }}>{dialog.title}</div>
         <div style={{ fontSize: 13.5, color: "#7A7488", fontFamily: "Nunito, sans-serif", lineHeight: 1.55, marginBottom: 16 }}>{dialog.message}</div>
         <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={onCancel} style={{ flex: 1, padding: "12px 14px", borderRadius: 14, border: "1px solid #F0E8DB", background: "#fff", color: "#7A7488", fontSize: 13, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
+          <button onClick={requestCancel} style={{ flex: 1, padding: "12px 14px", borderRadius: 14, border: "1px solid #F0E8DB", background: "#fff", color: "#7A7488", fontSize: 13, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
             Annuler
           </button>
           <button onClick={onConfirm} style={{ flex: 1, padding: "12px 14px", borderRadius: 14, border: "none", background: "#E0654E", color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
@@ -1186,7 +1201,7 @@ function NavBtn({ t, active, onClick }) {
 }
 
 function Typing({ id }) {
-  const a = AGENTS[id];
+  const a = AGENTS[id] || AGENTS.ceo;
   return (
     <div className="pop" style={{ display: "flex", gap: 9, alignItems: "flex-end", marginBottom: 14 }}>
       <Character id={id} size={36} />
@@ -1198,12 +1213,13 @@ function Typing({ id }) {
 }
 
 function FeedMsg({ m, expanded, setExpanded, onValidate, onContinueMission, onAction, compact = false, title, muted = false, onOpenAssets, messageRef = null }) {
-  const time = m.ts?.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  const timestamp = m.ts?.toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
   if (m.type === "command") {
-    const t = AGENTS[m.target];
+    const t = AGENTS[m.target] || AGENTS.ceo;
     return (
       <div className="pop" style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", marginBottom: 16 }}>
-        <div style={{ fontSize: 11.5, color: "#B3A892", fontFamily: "Nunito, sans-serif", marginBottom: 5, marginRight: 4, fontWeight: 600 }}>Vous, pour {t?.name} · {time}</div>
+        <div style={{ fontSize: 11.5, color: "#B3A892", fontFamily: "Nunito, sans-serif", marginBottom: 5, marginRight: 4, fontWeight: 600 }}>Vous, pour {t?.name}</div>
+        <div style={{ fontSize: 10.5, color: "#C3B8A6", fontFamily: "Nunito, sans-serif", marginBottom: 6, marginRight: 4 }}>{timestamp}</div>
         <div style={{ maxWidth: "86%", background: "linear-gradient(135deg, #FF8A66, #F2785C)", color: "#fff", borderRadius: "20px 20px 6px 20px", padding: "12px 16px", fontSize: 14.5, lineHeight: 1.55, fontWeight: 600, fontFamily: "Nunito, sans-serif", boxShadow: "0 6px 18px rgba(242,120,92,0.25)" }}>{m.content}</div>
       </div>
     );
@@ -1251,17 +1267,20 @@ function FeedMsg({ m, expanded, setExpanded, onValidate, onContinueMission, onAc
       </div>
     );
   }
-  const a = AGENTS[m.agentId];
+  const a = AGENTS[m.agentId] || AGENTS.ceo;
   return (
     <div ref={messageRef} className="pop" style={{ marginBottom: 16, opacity: muted ? 0.6 : 1 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 6, flexWrap: "wrap" }}>
         <Character id={m.agentId} size={32} badge />
-        <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", minWidth: 0 }}>
-          <span style={{ fontSize: 13.5, fontWeight: 700, color: a.color, fontFamily: "Fredoka, sans-serif" }}>{a.name}</span>
-          {title && <span style={{ fontSize: 10.5, color: "#7A7488", background: "#F7F1E6", borderRadius: 999, padding: "3px 8px", fontFamily: "Nunito, sans-serif", fontWeight: 800 }}>{title}</span>}
-          <span style={{ fontSize: 11, color: "#C3B8A6", fontFamily: "Nunito, sans-serif" }}>{a.role}</span>
-          {m.flags?.includes("VALIDATION_REQUIRED") && <span style={{ fontSize: 10, color: "#E8A33D", background: "#FCF3E1", border: "1px solid #F2DDAE", borderRadius: 20, padding: "2px 9px", fontFamily: "Nunito, sans-serif", fontWeight: 700 }}>À valider</span>}
-          {m.flags?.includes("BLOCKER") && <span style={{ fontSize: 10, color: "#E0654E", background: "#FFF1EE", border: "1px solid #FAD4CB", borderRadius: 20, padding: "2px 9px", fontFamily: "Nunito, sans-serif", fontWeight: 700 }}>Bloqué</span>}
+        <div style={{ minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", minWidth: 0 }}>
+            <span style={{ fontSize: 13.5, fontWeight: 700, color: a.color, fontFamily: "Fredoka, sans-serif" }}>{a.name}</span>
+            {title && <span style={{ fontSize: 10.5, color: "#7A7488", background: "#F7F1E6", borderRadius: 999, padding: "3px 8px", fontFamily: "Nunito, sans-serif", fontWeight: 800 }}>{title}</span>}
+            <span style={{ fontSize: 11, color: "#C3B8A6", fontFamily: "Nunito, sans-serif" }}>{a.role}</span>
+            {m.flags?.includes("VALIDATION_REQUIRED") && <span style={{ fontSize: 10, color: "#E8A33D", background: "#FCF3E1", border: "1px solid #F2DDAE", borderRadius: 20, padding: "2px 9px", fontFamily: "Nunito, sans-serif", fontWeight: 700 }}>À valider</span>}
+            {m.flags?.includes("BLOCKER") && <span style={{ fontSize: 10, color: "#E0654E", background: "#FFF1EE", border: "1px solid #FAD4CB", borderRadius: 20, padding: "2px 9px", fontFamily: "Nunito, sans-serif", fontWeight: 700 }}>Bloqué</span>}
+          </div>
+          <div style={{ fontSize: 10.5, color: "#C3B8A6", fontFamily: "Nunito, sans-serif", marginTop: 2 }}>{timestamp}</div>
         </div>
       </div>
       <div style={{ minWidth: 0 }}>
@@ -1294,7 +1313,7 @@ function FeedMsg({ m, expanded, setExpanded, onValidate, onContinueMission, onAc
             {expanded === m.id && <div style={{ marginTop: 9 }}><RichText text={m.deliverable} color="#5A5568" /></div>}
           </button>
         )}
-        {!compact && m.missionId && (m.phase === "final_validation" || m.deliverable?.trim()) && (
+        {!compact && m.missionId && m.phase === "final_validation" && (
           <div style={{ display: "flex", gap: 8, marginTop: 9 }}>
             <button onClick={() => onContinueMission?.(m, { type: "full" })} style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #F2DDAE", background: "#FCF3E1", color: "#A76B00", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "Nunito, sans-serif" }}>
               Revoir le livrable
@@ -1323,7 +1342,7 @@ function SectionCard({ icon: Icon, color, title, hint, children }) {
 }
 
 function MissionListItem({ mission, selected, onOpen, onAction, isProcessing }) {
-  const agent = AGENTS[mission.target];
+  const agent = AGENTS[mission.target] || AGENTS.ceo;
   const actionWidth = 204;
   const [offset, setOffset] = useState(0);
   const [dragging, setDragging] = useState(false);
@@ -1538,7 +1557,7 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
       )}
 
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-        {!mission.archived && (
+        {!mission.archived && finalResponse && !isProcessing && (
           <>
             <button onClick={() => onContinueMission(mission.finalResponse || mission.latestResponse || mission.command, { type: "full" })} style={{ flex: 1, padding: "11px 14px", borderRadius: 14, border: "1px solid #F2DDAE", background: "#FCF3E1", color: "#A76B00", fontSize: 13, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
               Demander une revision
@@ -1547,6 +1566,11 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
               Valider
             </button>
           </>
+        )}
+        {!mission.archived && (!finalResponse || isProcessing) && (
+          <div style={{ flex: 1, padding: "11px 14px", borderRadius: 14, border: "1px solid #F0E8DB", background: "#F9F6F0", color: "#9A93A8", fontSize: 13, fontWeight: 700, fontFamily: "Nunito, sans-serif", textAlign: "center" }}>
+            Le livrable final doit etre termine avant validation ou revision.
+          </div>
         )}
         {mission.archived && (
           <button onClick={() => onArchive(mission.id, "restore")} style={{ flex: 1, padding: "11px 14px", borderRadius: 14, border: "1px solid #F0E8DB", background: "#fff", color: "#7A7488", fontSize: 13, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
@@ -1931,14 +1955,26 @@ function BilanScreen({ kpis, messages, activity, leaderboard, maxAct, onOpenMiss
 function MissionSheet({ command, setCommand, onSend, onClose, revisionMeta = null }) {
   const suggestedLead = routeObjectiveToLead(command);
   const a = AGENTS[suggestedLead];
+  const [closing, setClosing] = useState(false);
+
+  useEffect(() => {
+    setClosing(false);
+  }, [revisionMeta, command]);
+
+  const requestClose = () => {
+    if (closing) return;
+    setClosing(true);
+    setTimeout(() => onClose?.(), 220);
+  };
+
   return (
     <>
-      <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(60,45,30,0.35)", backdropFilter: "blur(2px)", animation: "fadeBg 0.25s ease", zIndex: 40 }} />
-      <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, background: "#FBF6EE", borderRadius: "28px 28px 0 0", padding: "10px 18px calc(env(safe-area-inset-bottom, 0px) + 22px)", animation: "sheetUp 0.4s cubic-bezier(0.34,1.4,0.64,1)", zIndex: 41, maxHeight: "88%", overflowY: "auto" }}>
+      <div onClick={requestClose} style={{ position: "absolute", inset: 0, background: "rgba(60,45,30,0.35)", backdropFilter: "blur(2px)", animation: `${closing ? "fadeBgOut" : "fadeBg"} 0.22s ease forwards`, zIndex: 40 }} />
+      <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, background: "#FBF6EE", borderRadius: "28px 28px 0 0", padding: "10px 18px calc(env(safe-area-inset-bottom, 0px) + 22px)", animation: `${closing ? "sheetDown" : "sheetUp"} 0.22s ease forwards`, zIndex: 41, maxHeight: "88%", overflowY: "auto" }}>
         <div style={{ width: 40, height: 5, borderRadius: 3, background: "#E5DAC8", margin: "0 auto 16px" }} />
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
           <div style={{ fontSize: 19, fontWeight: 600, color: "#3D3A4E", fontFamily: "Fredoka, sans-serif" }}>Nouvelle mission</div>
-          <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: "50%", background: "#fff", border: "1px solid #F0E8DB", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><X size={17} color="#9A93A8" /></button>
+          <button onClick={requestClose} style={{ width: 32, height: 32, borderRadius: "50%", background: "#fff", border: "1px solid #F0E8DB", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><X size={17} color="#9A93A8" /></button>
         </div>
         {revisionMeta && (
           <div style={{ background: "#FCF3E1", border: "1px solid #F2DDAE", borderRadius: 14, padding: "11px 13px", marginBottom: 14 }}>
@@ -2039,9 +2075,11 @@ export default function AgencySaaS() {
   const [lightbox, setLightbox] = useState(null);
 
   const idRef = useRef(0);
+  const messagesRef = useRef(messages);
   const configRef = useRef(config);
   const hydrated = useRef(false);
   configRef.current = config;
+  messagesRef.current = messages;
 
   // Load from storage
   useEffect(() => {
@@ -2057,6 +2095,7 @@ export default function AgencySaaS() {
           const w = await storageAdapter.get("agencyos:workspace");
           if (w?.value) {
             const ws = normalizeWorkspacePayload(JSON.parse(w.value));
+            messagesRef.current = ws.messages;
             setMessages(ws.messages);
             setKpis(ws.kpis);
             idRef.current = ws.lastId || 0;
@@ -2100,7 +2139,11 @@ export default function AgencySaaS() {
 
   const addMsg = useCallback((msg) => {
     const id = ++idRef.current;
-    setMessages((p) => [...p, { id, ts: new Date(), ...msg }]);
+    setMessages((p) => {
+      const next = [...p, { id, ts: new Date(), ...msg }];
+      messagesRef.current = next;
+      return next;
+    });
     if (msg.type === "response") setKpis((p) => ({ ...p, total: p.total + 1, activity: { ...p.activity, [msg.agentId]: (p.activity[msg.agentId] || 0) + 1 } }));
   }, []);
 
@@ -2123,7 +2166,7 @@ export default function AgencySaaS() {
     try {
       const currentWorking = thinking.filter((id) => id !== agentId);
       const brief = buildBrief(configRef.current, agentId, currentWorking);
-      const missionContext = buildMissionContext(messages, missionId);
+      const missionContext = buildMissionContext(messagesRef.current, missionId);
       const mergedContext = [missionContext, context].filter(Boolean).join("\n\n");
       const res = await callAgent(agentId, task, mergedContext, brief);
 
@@ -2173,13 +2216,13 @@ export default function AgencySaaS() {
       addMsg({ type: "error", agentId, content: e.message });
     }
     setTimeout(() => setStatus(agentId, "idle"), 2500);
-  }, [addEvent, addMsg, setStatus, thinking, messages]);
+  }, [addEvent, addMsg, setStatus, thinking]);
 
   const handleSend = useCallback(async () => {
     if (!command.trim() || processing) return;
     const cmd = command.trim();
     if (revisionMeta?.type === "image" && selectedMissionId) {
-      const mission = buildMissionList(messages).find((m) => m.id === selectedMissionId);
+      const mission = buildMissionList(messagesRef.current).find((m) => m.id === selectedMissionId);
       const sourceMessage = mission?.messages.find((item) => item.id === revisionMeta.messageId) || mission?.latestVisualResponse || null;
       const sourceAssets = sourceMessage?.assets || [];
       const sourceAsset = sourceAssets[revisionMeta.assetIndex];
@@ -2245,7 +2288,7 @@ export default function AgencySaaS() {
     }
 
     const missionId = selectedMissionId || `mission-${Date.now()}`;
-    const existingMission = selectedMissionId ? buildMissionList(messages).find((m) => m.id === selectedMissionId) : null;
+    const existingMission = selectedMissionId ? buildMissionList(messagesRef.current).find((m) => m.id === selectedMissionId) : null;
     const leadAgentId = existingMission?.target || routeObjectiveToLead(cmd);
     const plan = buildExecutionPlan(leadAgentId, cmd);
     setCommand(""); setSheet(false); setTab("missions"); setProcessing(true); setFocusMessageId(null); setRevisionMeta(null);
@@ -2267,12 +2310,12 @@ export default function AgencySaaS() {
       setProcessing(false);
       setProcessingMissionId(null);
     }
-  }, [command, processing, addMsg, addEvent, runAgent, selectedMissionId, messages, revisionMeta]);
+  }, [command, processing, addMsg, addEvent, runAgent, selectedMissionId, revisionMeta]);
 
   const handleContinueMission = useCallback((message, options = { type: "full" }) => {
     const fallbackMissionId = selectedMissionId || null;
     const missionId = message?.missionId || fallbackMissionId;
-    const mission = buildMissionList(messages).find((m) => m.id === missionId);
+    const mission = buildMissionList(messagesRef.current).find((m) => m.id === missionId);
     if (!missionId && !mission) {
       setRevisionMeta({ missionId: null, messageId: null, type: "full", assetIndex: null });
       setCommand("Merci d'ameliorer ou corriger le livrable selon mon retour : ");
@@ -2289,7 +2332,7 @@ export default function AgencySaaS() {
       setTarget(mission.target);
     }
     setSheet(true);
-  }, [messages, selectedMissionId]);
+  }, [selectedMissionId]);
 
   const handleSuggestedAction = useCallback((message, action) => {
     setSelectedMissionId(message.missionId || null);
@@ -2373,8 +2416,12 @@ export default function AgencySaaS() {
         @keyframes bounce { 0%,60%,100%{transform:translateY(0);} 30%{transform:translateY(-6px);} }
         @keyframes spin { from{transform:rotate(0deg);} to{transform:rotate(360deg);} }
         @keyframes pop { from{opacity:0;transform:translateY(12px) scale(0.97);} to{opacity:1;transform:translateY(0) scale(1);} }
+        @keyframes lightboxOut { from{opacity:1;transform:scale(1);} to{opacity:0;transform:scale(0.98);} }
         @keyframes sheetUp { from{transform:translateY(100%);} to{transform:translateY(0);} }
+        @keyframes sheetDown { from{transform:translateY(0);} to{transform:translateY(100%);} }
         @keyframes fadeBg { from{opacity:0;} to{opacity:1;} }
+        @keyframes fadeBgOut { from{opacity:1;} to{opacity:0;} }
+        @keyframes modalUp { from{opacity:0; transform:translateY(16px) scale(0.98);} to{opacity:1; transform:translateY(0) scale(1);} }
         .pop { animation: pop 0.4s cubic-bezier(0.34,1.56,0.64,1) forwards; }
         textarea:focus, input:focus, button:focus { outline: none; }
         textarea { resize: none; }
