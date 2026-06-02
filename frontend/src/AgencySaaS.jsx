@@ -627,19 +627,27 @@ function normalizeWorkspacePayload(rawWorkspace = {}) {
   const rawMessages = Array.isArray(rawWorkspace.messages) ? rawWorkspace.messages : [];
   const rawKpis = rawWorkspace.kpis && typeof rawWorkspace.kpis === "object" ? rawWorkspace.kpis : {};
   const rawDeliverables = Array.isArray(rawKpis.deliverables) ? rawKpis.deliverables : [];
+  const rawActivity = rawKpis.activity && typeof rawKpis.activity === "object" ? rawKpis.activity : {};
+  const normalizedActivity = Object.fromEntries(
+    Object.entries(rawActivity)
+      .filter(([key]) => typeof key === "string" && key)
+      .map(([key, value]) => [key, Number.isFinite(value) ? value : Number(value) || 0])
+  );
 
   return {
     messages: rawMessages.map(normalizeMessageRecord).filter(Boolean),
     kpis: {
       ...DEFAULT_KPIS,
       ...rawKpis,
+      total: Number.isFinite(rawKpis.total) ? rawKpis.total : Number(rawKpis.total) || 0,
+      completed: Number.isFinite(rawKpis.completed) ? rawKpis.completed : Number(rawKpis.completed) || 0,
       deliverables: rawDeliverables.map(normalizeDeliverableRecord).filter(Boolean),
       flags: Array.isArray(rawKpis.flags)
         ? rawKpis.flags
           .filter(isPlainRecord)
           .map((f) => ({ ...f, ts: f?.ts ? new Date(f.ts) : new Date() }))
         : [],
-      activity: rawKpis.activity && typeof rawKpis.activity === "object" ? rawKpis.activity : {},
+      activity: normalizedActivity,
     },
     lastId: Number.isFinite(rawWorkspace.lastId) ? rawWorkspace.lastId : 0,
   };
@@ -776,27 +784,24 @@ function summarizeMission(messages, missionId) {
   const command = missionMessages.find((m) => m.type === "command");
   const finalResponse = [...missionMessages].reverse().find((m) => m.type === "response" && m.phase === "final_validation");
   const latestResponse = [...missionMessages].reverse().find((m) => m.type === "response");
+  const latestCompletedResponse = [...missionMessages].reverse().find((m) => m.type === "response" && (m.deliverable?.trim() || m.assets?.length || m.content?.trim()));
   const latestProgress = [...missionMessages].reverse().find((m) => m.type === "progress");
   const latestDelegation = [...missionMessages].reverse().find((m) => m.type === "delegation");
   const lastLifecycle = [...missionMessages].reverse().find((m) => m.type === "mission_archived" || m.type === "mission_restored" || m.type === "mission_deleted");
   const archived = lastLifecycle?.type === "mission_archived";
   const deleted = lastLifecycle?.type === "mission_deleted";
-  const latestResponseTs = latestResponse ? new Date(latestResponse.ts || 0).getTime() : 0;
+  const latestResponseTs = latestCompletedResponse ? new Date(latestCompletedResponse.ts || 0).getTime() : 0;
   const latestProgressTs = latestProgress ? new Date(latestProgress.ts || 0).getTime() : 0;
   const latestDelegationTs = latestDelegation ? new Date(latestDelegation.ts || 0).getTime() : 0;
-  const latestResponseHasOutput = Boolean(
-    latestResponse?.deliverable?.trim() ||
-    latestResponse?.assets?.length ||
-    latestResponse?.content?.trim()
-  );
+  const latestResponseHasOutput = Boolean(latestCompletedResponse);
   const latestResponseLooksFinal = Boolean(
     latestResponseHasOutput &&
     latestResponseTs >= latestProgressTs &&
     latestResponseTs >= latestDelegationTs
   );
-  const resolvedFinalResponse = finalResponse || (latestResponseLooksFinal ? latestResponse : (archived ? latestResponse : null));
+  const resolvedFinalResponse = finalResponse || (latestResponseLooksFinal ? latestCompletedResponse : (archived ? latestCompletedResponse || latestResponse : null));
   const latestVisualResponse = [...missionMessages].reverse().find((m) => m.type === "response" && m.assets?.length);
-  const relayPreview = !resolvedFinalResponse && latestResponse ? latestResponse : null;
+  const relayPreview = !resolvedFinalResponse && (latestCompletedResponse || latestResponse) ? (latestCompletedResponse || latestResponse) : null;
 
   return {
     id: missionId,
@@ -807,6 +812,7 @@ function summarizeMission(messages, missionId) {
     command,
     finalResponse: resolvedFinalResponse,
     latestResponse,
+    latestCompletedResponse,
     latestVisualResponse,
     relayPreview,
     latestProgress,
@@ -1515,7 +1521,7 @@ function MissionListItem({ mission, selected, onOpen, onAction, isProcessing }) 
 
 function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueMission, onAction, onArchive, onBack, onOpenAssets, isProcessing, focusMessageId }) {
   const finalResponse = mission.finalResponse || null;
-  const actionableResponse = finalResponse || mission.latestResponse || mission.latestVisualResponse || null;
+  const actionableResponse = finalResponse || mission.latestCompletedResponse || mission.latestVisualResponse || mission.latestResponse || null;
   const relayPreview = mission.relayPreview;
   const [openRelayId, setOpenRelayId] = useState(null);
   const messageRefs = useRef({});
@@ -2092,11 +2098,11 @@ function MissionSheet({ command, setCommand, onSend, onClose, revisionMeta = nul
 class ScreenErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false };
+    this.state = { hasError: false, errorMessage: "" };
   }
 
-  static getDerivedStateFromError() {
-    return { hasError: true };
+  static getDerivedStateFromError(error) {
+    return { hasError: true, errorMessage: error?.message || "" };
   }
 
   componentDidCatch(error) {
@@ -2105,7 +2111,7 @@ class ScreenErrorBoundary extends React.Component {
 
   componentDidUpdate(prevProps) {
     if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
-      this.setState({ hasError: false });
+      this.setState({ hasError: false, errorMessage: "" });
     }
   }
 
@@ -2116,6 +2122,14 @@ class ScreenErrorBoundary extends React.Component {
           <div style={{ ...ST.card, padding: 18, width: "100%", maxWidth: 420 }}>
             <div style={{ fontSize: 17, fontWeight: 700, color: "#3D3A4E", fontFamily: "Fredoka, sans-serif", marginBottom: 8 }}>Cette vue a rencontre un probleme</div>
             <div style={{ fontSize: 13.5, color: "#7A7488", fontFamily: "Nunito, sans-serif", lineHeight: 1.55 }}>Essaie de revenir a un autre onglet puis de rouvrir cet ecran. Si le probleme persiste, recharge l'application.</div>
+            {this.state.errorMessage && (
+              <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 12, background: "#FBF6EE", color: "#9A93A8", fontSize: 12.5, lineHeight: 1.45, fontFamily: "Nunito, sans-serif", overflowWrap: "anywhere" }}>
+                Détail technique : {this.state.errorMessage}
+              </div>
+            )}
+            <button onClick={() => this.setState({ hasError: false, errorMessage: "" })} style={{ marginTop: 12, width: "100%", padding: "11px 14px", borderRadius: 12, border: "1px solid #F0E8DB", background: "#fff", color: "#7A7488", fontSize: 13, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
+              Réessayer
+            </button>
           </div>
         </div>
       );
@@ -2175,6 +2189,15 @@ export default function AgencySaaS() {
             setMessages(ws.messages);
             setKpis(ws.kpis);
             idRef.current = ws.lastId || 0;
+            try {
+              await storageAdapter.set("agencyos:workspace", JSON.stringify({
+                messages: ws.messages,
+                kpis: ws.kpis,
+                lastId: ws.lastId || 0,
+              }));
+            } catch (_repairError) {
+              // Ignore silent repair failures and keep the in-memory state usable.
+            }
           }
         }
       } catch (e) { }
