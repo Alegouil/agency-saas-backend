@@ -110,6 +110,16 @@ async function insertImageRecord(url, key, record) {
   return rows[0] || null;
 }
 
+async function resolveImageBase64(imageEntry) {
+  if (imageEntry?.b64_json) return imageEntry.b64_json;
+  if (!imageEntry?.url) return null;
+
+  const response = await fetch(imageEntry.url);
+  if (!response.ok) return null;
+  const bytes = Buffer.from(await response.arrayBuffer());
+  return bytes.toString("base64");
+}
+
 export default async function handler(req, res) {
   setCors(res);
 
@@ -124,7 +134,7 @@ export default async function handler(req, res) {
   }
 
   const apiKey = process.env.OPENAI_API_KEY;
-  const model = process.env.OPENAI_IMAGE_MODEL || "gpt-image-2";
+  const model = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
   const prompt = String(req.body?.prompt || "").trim();
   const requestedCount = Number(req.body?.count || 1);
   const count = Number.isFinite(requestedCount) ? Math.max(1, Math.min(10, requestedCount)) : 1;
@@ -161,6 +171,7 @@ export default async function handler(req, res) {
         : prompt;
       let response;
       let data;
+      let imageBase64 = null;
 
       if (referenceImages.length > 0) {
         const form = new FormData();
@@ -168,6 +179,7 @@ export default async function handler(req, res) {
         form.append("prompt", indexedPrompt);
         form.append("size", "1024x1024");
         form.append("quality", "low");
+        form.append("response_format", "b64_json");
         referenceImages.forEach((image, imageIndex) => {
           const blob = new Blob([image.buffer], { type: image.mimeType });
           const fieldName = referenceImages.length === 1 ? "image" : "image[]";
@@ -183,9 +195,12 @@ export default async function handler(req, res) {
         });
 
         data = await response.json();
+        if (response.ok) {
+          imageBase64 = await resolveImageBase64(data?.data?.[0]);
+        }
       }
 
-      if (!response || !response.ok) {
+      if (!response || !response.ok || !imageBase64) {
         response = await fetch("https://api.openai.com/v1/images/generations", {
           method: "POST",
           headers: {
@@ -199,10 +214,14 @@ export default async function handler(req, res) {
             size: "1024x1024",
             quality: "low",
             output_format: "png",
+            response_format: "b64_json",
           }),
         });
 
         data = await response.json();
+        if (response.ok) {
+          imageBase64 = await resolveImageBase64(data?.data?.[0]);
+        }
       }
 
       if (!response.ok) {
@@ -210,7 +229,6 @@ export default async function handler(req, res) {
         return;
       }
 
-      const imageBase64 = data?.data?.[0]?.b64_json;
       if (!imageBase64) {
         res.status(502).json({ error: "No image returned by OpenAI" });
         return;

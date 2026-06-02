@@ -848,7 +848,8 @@ async function maybeGenerateDesignerAssets(config, agentId, task, phase, respons
       model: result.model || "",
       index,
     }));
-  } catch (_error) {
+  } catch (error) {
+    console.error("Designer image generation failed", error);
     return [];
   }
 }
@@ -2355,10 +2356,19 @@ export default function AgencySaaS() {
       }
 
       const finalDeliverable = phase === "final_validation" ? (res.deliverable?.trim() ? res.deliverable : res.response) : res.deliverable;
-      if (shouldGenerateDesignerImage(agentId, phase, task, { ...res, deliverable: finalDeliverable })) {
+      const imageRequested = shouldGenerateDesignerImage(agentId, phase, task, { ...res, deliverable: finalDeliverable });
+      if (imageRequested) {
         addMsg({ type: "progress", agentId, missionId, phase: "image_generation", content: getProgressLabel(agentId, "image_generation") });
       }
       const assets = await maybeGenerateDesignerAssets(configRef.current, agentId, task, phase, { ...res, deliverable: finalDeliverable }, missionId, mergedContext);
+      if (imageRequested && !assets.length) {
+        addMsg({
+          type: "error",
+          agentId,
+          missionId,
+          content: "La génération d'images n'a rien renvoyé. Le prompt créatif est prêt, mais aucun visuel n'a été retourné par l'API image.",
+        });
+      }
       addMsg({ type: "response", agentId, content: res.response, deliverable: finalDeliverable, flags: res.flags || [], depth, extractions, missionId, phase, assets });
 
       if (finalDeliverable?.trim()) {
