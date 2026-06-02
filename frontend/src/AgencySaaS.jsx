@@ -823,7 +823,7 @@ function buildDesignerImagePrompt(config, task, response, context = "") {
 
 async function maybeGenerateDesignerAssets(config, agentId, task, phase, response, missionId, context = "") {
   if (!shouldGenerateDesignerImage(agentId, phase, task, response)) {
-    return [];
+    return { assets: [], error: "" };
   }
 
   try {
@@ -839,18 +839,21 @@ async function maybeGenerateDesignerAssets(config, agentId, task, phase, respons
       { references: logoReferences, exactCount: visualPlan.exactCount }
     );
     const images = result?.images?.length ? result.images : (result?.imageUrl ? [result.imageUrl] : []);
-    return images.map((url, index) => ({
-      kind: "image",
-      url,
-      alt: `${extractDeliverableTitle(response?.deliverable || response?.response || task, "Visuel généré")}${images.length > 1 ? ` · visuel ${index + 1}` : ""}`,
-      revisedPrompt: result.revisedPrompt || "",
-      prompt: result.prompt || "",
-      model: result.model || "",
-      index,
-    }));
+    return {
+      assets: images.map((url, index) => ({
+        kind: "image",
+        url,
+        alt: `${extractDeliverableTitle(response?.deliverable || response?.response || task, "Visuel généré")}${images.length > 1 ? ` · visuel ${index + 1}` : ""}`,
+        revisedPrompt: result.revisedPrompt || "",
+        prompt: result.prompt || "",
+        model: result.model || "",
+        index,
+      })),
+      error: images.length ? "" : "Aucun visuel n'a ete retourne par l'API image.",
+    };
   } catch (error) {
     console.error("Designer image generation failed", error);
-    return [];
+    return { assets: [], error: error?.message || "La generation d'images a echoue sans message detaille." };
   }
 }
 
@@ -2382,16 +2385,21 @@ export default function AgencySaaS() {
       if (imageRequested) {
         addMsg({ type: "progress", agentId, missionId, phase: "image_generation", content: getProgressLabel(agentId, "image_generation") });
       }
-      const assets = await maybeGenerateDesignerAssets(configRef.current, agentId, task, phase, { ...res, deliverable: finalDeliverable }, missionId, mergedContext);
+      const imageResult = await maybeGenerateDesignerAssets(configRef.current, agentId, task, phase, { ...res, deliverable: finalDeliverable }, missionId, mergedContext);
+      const assets = imageResult.assets || [];
+      const imageError = imageResult.error || "";
       if (imageRequested && !assets.length) {
         addMsg({
           type: "error",
           agentId,
           missionId,
-          content: "La génération d'images n'a rien renvoyé. Le prompt créatif est prêt, mais aucun visuel n'a été retourné par l'API image.",
+          content: imageError || "La génération d'images n'a rien renvoyé. Le prompt créatif est prêt, mais aucun visuel n'a été retourné par l'API image.",
         });
       }
-      addMsg({ type: "response", agentId, content: res.response, deliverable: finalDeliverable, flags: res.flags || [], depth, extractions, missionId, phase, assets });
+      const responseContent = imageRequested && !assets.length
+        ? `${res.response}\n\nNote systeme : la génération d'images a échoué. ${imageError || "Aucun visuel n'a été retourné."}`
+        : res.response;
+      addMsg({ type: "response", agentId, content: responseContent, deliverable: finalDeliverable, flags: res.flags || [], depth, extractions, missionId, phase, assets });
 
       if (finalDeliverable?.trim()) {
         const title = extractDeliverableTitle(finalDeliverable, "Livrable");
