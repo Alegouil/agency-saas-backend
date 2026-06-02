@@ -89,11 +89,18 @@ async function saveRemoteState(patch) {
   return response.json();
 }
 
-async function callImageGenerator(prompt, count = 1, conversationId = null, messageId = null) {
+async function callImageGenerator(prompt, count = 1, conversationId = null, messageId = null, options = {}) {
   const response = await fetch(IMAGE_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, count, conversationId, messageId }),
+    body: JSON.stringify({
+      prompt,
+      count,
+      conversationId,
+      messageId,
+      references: Array.isArray(options.references) ? options.references : [],
+      exactCount: Number.isFinite(options.exactCount) ? options.exactCount : null,
+    }),
   });
 
   if (!response.ok) {
@@ -304,7 +311,20 @@ const METIERS = [
 ];
 
 const DEFAULT_CONFIG = {
-  company: { name: "", type: "", location: "", mission: "", values: [], targets: [], poles: [], brand: "", objectives: "" },
+  company: {
+    name: "",
+    type: "",
+    location: "",
+    website: "",
+    contactEmail: "",
+    contactPhone: "",
+    mission: "",
+    values: [],
+    targets: [],
+    poles: [],
+    brand: "",
+    objectives: "",
+  },
   metiers: {},
   knowledge: {},
   decisions: [],
@@ -372,6 +392,9 @@ function buildBrief(config, agentId, currentAgents = []) {
   const comp = [];
 
   if (c.name) comp.push(`Entreprise : ${c.name}${c.type ? " — " + c.type : ""}${c.location ? ", à " + c.location : ""}.`);
+  if (c.website) comp.push(`Site web : ${c.website}`);
+  if (c.contactEmail) comp.push(`Email de contact : ${c.contactEmail}`);
+  if (c.contactPhone) comp.push(`Téléphone de contact : ${c.contactPhone}`);
   if (c.mission) comp.push(`Mission : ${c.mission}`);
   if (c.values?.length) comp.push(`Valeurs : ${c.values.join(", ")}.`);
   if (c.targets?.length) comp.push(`Clients idéaux : ${c.targets.join(" ; ")}.`);
@@ -583,12 +606,44 @@ function buildSnippet(text, title = "") {
   return body.length > 220 ? `${body.slice(0, 217).trim()}…` : body;
 }
 
-function inferImageCount(task, response) {
-  const text = `${task || ""}\n${response?.deliverable || ""}\n${response?.response || ""}`.toLowerCase();
-  const match = text.match(/\b(10|[1-9])\s+(?:posts?|publications?|visuels?|images?|slides?|cartes?|carrousels?)\b/);
-  if (match) return Math.max(1, Math.min(10, Number(match[1])));
-  if (text.includes("carrousel")) return 4;
-  return 1;
+function countStructuredVisualSections(text) {
+  const matches = [...String(text || "").matchAll(/(?:^|\n)\s*(?:slide|diapo(?:sitive)?|visuel|image|page|carte)\s*(?:n[o°]\s*)?(?:#\s*)?(\d{1,2})\b/gi)]
+    .map((match) => Number(match[1]))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  if (!matches.length) return null;
+  const unique = [...new Set(matches)].sort((a, b) => a - b);
+  const sequential = unique.every((value, index) => value === index + 1);
+  return sequential ? unique.length : Math.max(...unique);
+}
+
+function extractExplicitVisualCount(text) {
+  const source = String(text || "").toLowerCase();
+  const patterns = [
+    /\b(?:carrousel|carousel|serie|série|suite)\s+(?:de\s+)?(10|[1-9])\s+(?:slides?|diapos?(?:itives)?|visuels?|images?|cartes?)\b/,
+    /\b(10|[1-9])\s+(?:slides?|diapos?(?:itives)?|visuels?|images?|cartes?)\b/,
+    /\b(?:comprend|comporte|prévoit|prevoyez|prévois|prevu|prévu|avec)\s+(10|[1-9])\s+(?:slides?|diapos?(?:itives)?|visuels?|images?|cartes?)\b/,
+  ];
+  for (const pattern of patterns) {
+    const match = source.match(pattern);
+    if (match) return Math.max(1, Math.min(10, Number(match[1])));
+  }
+  return null;
+}
+
+function inferVisualPlan(task, response, context = "") {
+  const responseText = `${response?.deliverable || ""}\n${response?.response || ""}`;
+  const taskText = String(task || "");
+  const contextText = String(context || "");
+  const contextCount = extractExplicitVisualCount(contextText) || countStructuredVisualSections(contextText);
+  const responseCount = countStructuredVisualSections(responseText) || extractExplicitVisualCount(responseText);
+  const taskCount = extractExplicitVisualCount(taskText) || countStructuredVisualSections(taskText);
+  const exactCount = contextCount || responseCount || taskCount || (/carrousel|carousel/i.test(`${contextText}\n${taskText}\n${responseText}`) ? 4 : 1);
+  return {
+    exactCount: Math.max(1, Math.min(10, Number(exactCount) || 1)),
+    contextCount,
+    responseCount,
+    taskCount,
+  };
 }
 
 function getResponseTitle(message) {
@@ -720,21 +775,26 @@ function shouldGenerateDesignerImage(agentId, phase, task, response) {
   return phase === "design" || ["linkedin", "carrousel", "visuel", "design", "slide", "post", "image", "illustration"].some((keyword) => text.includes(keyword));
 }
 
-function buildDesignerImagePrompt(config, task, response) {
+function buildDesignerImagePrompt(config, task, response, context = "") {
   const company = config.company || {};
   const visualStyle = config.metiers?.da || {};
   const comStyle = config.metiers?.com || {};
   const logoAssets = Array.isArray(visualStyle.logo) ? visualStyle.logo : [];
+  const visualPlan = inferVisualPlan(task, response, context);
+  const contactLine = [company.website, company.contactEmail, company.contactPhone].filter(Boolean).join(" · ");
 
   const brandBits = [
     company.name ? `Entreprise : ${company.name}.` : "",
     company.mission ? `Mission : ${company.mission}.` : "",
     company.brand ? `ADN de marque : ${company.brand}.` : "",
+    company.website ? `Site : ${company.website}.` : "",
+    company.contactEmail ? `Email de contact : ${company.contactEmail}.` : "",
+    company.contactPhone ? `Téléphone de contact : ${company.contactPhone}.` : "",
     company.values?.length ? `Valeurs : ${company.values.join(", ")}.` : "",
     visualStyle.colors?.length ? `Couleurs : ${visualStyle.colors.join(", ")}.` : "",
     visualStyle.fonts?.length ? `Typographies : ${visualStyle.fonts.join(", ")}.` : "",
     visualStyle.tone ? `Style visuel : ${visualStyle.tone}.` : "",
-    logoAssets.length ? `Des logos de marque sont fournis dans les reglages. Le visuel doit integrer un logo et le conserver de facon persistante sur toutes les slides si c'est un carrousel.` : "",
+    logoAssets.length ? "Un ou plusieurs logos de reference sont joints a cette demande. Reprends leur signe, leur composition et leur palette autant que possible." : "",
     comStyle.editorial ? `Ligne éditoriale : ${comStyle.editorial}.` : "",
   ].filter(Boolean);
 
@@ -745,25 +805,39 @@ function buildDesignerImagePrompt(config, task, response) {
     "Le rendu doit être élégant, contemporain, lisible sur mobile et cohérent avec une communication B2B haut de gamme.",
     "Évite les blocs de texte trop denses et privilégie une composition forte, claire et éditoriale.",
     "Si plusieurs visuels sont demandés, génère une image autonome par visuel. Jamais de collage, jamais plusieurs publications dans une seule image.",
+    visualPlan.exactCount > 1 ? `Nombre exact de slides a produire : ${visualPlan.exactCount}. Produis exactement ${visualPlan.exactCount} images, ni plus ni moins. Une image = une slide.` : "",
+    visualPlan.contextCount && visualPlan.responseCount && visualPlan.contextCount !== visualPlan.responseCount ? `Le planning amont fixe ${visualPlan.contextCount} slides. Ignore tout decompte contradictoire apparu plus tard et respecte strictement ${visualPlan.contextCount} slides.` : "",
     carouselLike ? "Pour un carrousel, conserve une structure persistante sur toutes les slides : header, logo, navigation, footer, marges, grille et système typographique cohérents d'une slide à l'autre." : "",
     carouselLike ? "La pagination, le footer, le header et la position du logo doivent rester constants sur toutes les slides." : "",
+    carouselLike && contactLine ? `Le footer doit reprendre de facon persistante les coordonnees de marque si cela reste lisible : ${contactLine}.` : "",
     carouselLike ? "Ne change d'une slide à l'autre que le contenu éditorial, l'illustration principale et les accents utiles. L'habillage de base doit rester stable et reconnaissable." : "",
     carouselLike ? "Respecte strictement le nombre de slides demande dans le brief amont. N'en retire aucune et n'en fusionne aucune." : "",
+    carouselLike ? "Si le brief contient une structure slide par slide, chaque image doit suivre uniquement le contenu de sa slide correspondante." : "",
     task ? `Objectif utilisateur : ${task}` : "",
     response?.deliverable ? `Direction créative à suivre : ${response.deliverable}` : "",
     response?.response ? `Contexte complémentaire : ${response.response}` : "",
+    context ? `Contexte amont a respecter : ${context}` : "",
     brandBits.length ? `Contraintes de marque : ${brandBits.join(" ")}` : "",
   ].filter(Boolean).join("\n\n");
 }
 
-async function maybeGenerateDesignerAssets(config, agentId, task, phase, response, missionId) {
+async function maybeGenerateDesignerAssets(config, agentId, task, phase, response, missionId, context = "") {
   if (!shouldGenerateDesignerImage(agentId, phase, task, response)) {
     return [];
   }
 
   try {
-    const count = inferImageCount(task, response);
-    const result = await callImageGenerator(buildDesignerImagePrompt(config, task, response), count, missionId, null);
+    const visualPlan = inferVisualPlan(task, response, context);
+    const logoReferences = (Array.isArray(config.metiers?.da?.logo) ? config.metiers.da.logo : [])
+      .filter((item) => item?.url)
+      .slice(0, 2);
+    const result = await callImageGenerator(
+      buildDesignerImagePrompt(config, task, response, context),
+      visualPlan.exactCount,
+      missionId,
+      null,
+      { references: logoReferences, exactCount: visualPlan.exactCount }
+    );
     const images = result?.images?.length ? result.images : (result?.imageUrl ? [result.imageUrl] : []);
     return images.map((url, index) => ({
       kind: "image",
@@ -861,7 +935,7 @@ function buildExecutionPlan(agentId, task) {
       },
       {
         agentId: "chargeCom",
-        task: `À partir de la stratégie validée par le directeur de la communication, prépare le plan opérationnel détaillé : formats, calendrier, canaux, nombre de contenus, séquençage et consignes d'exécution pour cette demande : ${task}`,
+        task: `À partir de la stratégie validée par le directeur de la communication, prépare le plan opérationnel détaillé : formats, calendrier, canaux, nombre de contenus, séquençage et consignes d'exécution pour cette demande : ${task}. Si c'est un carrousel, fixe un nombre exact de slides et garde ce nombre inchangé dans toute la suite de la mission.`,
         kind: "production",
       },
     ];
@@ -869,7 +943,7 @@ function buildExecutionPlan(agentId, task) {
     if (text.includes("linkedin") || text.includes("post") || text.includes("contenu")) {
       plan.push({
         agentId: "contentWriter",
-        task: `Rédige les contenus finaux ou brouillons des publications à partir du plan validé. Fournis un texte concret, structuré et prêt à être relu en français impeccable pour cette demande : ${task}`,
+        task: `Rédige les contenus finaux ou brouillons des publications à partir du plan validé. Fournis un texte concret, structuré et prêt à être relu en français impeccable pour cette demande : ${task}. Si le plan prévoit un carrousel, écris une structure slide par slide, numérotée, sans changer le nombre exact de slides décidé en amont.`,
         kind: "copy",
       });
     }
@@ -877,14 +951,14 @@ function buildExecutionPlan(agentId, task) {
     if (text.includes("linkedin") || text.includes("carrousel") || text.includes("visuel") || text.includes("design")) {
       plan.push({
         agentId: "graphiste",
-        task: `Propose la direction créative finale à partir du contenu et du plan : format, structure des visuels ou des slides, style visuel, éléments graphiques et indications prêtes à produire pour cette demande : ${task}. Respecte strictement le nombre de slides ou visuels déjà définis en amont. Conserve un header, un logo, une navigation, une pagination et un footer persistants sur toute la série.`,
+        task: `Propose la direction créative finale à partir du contenu et du plan : format, structure des visuels ou des slides, style visuel, éléments graphiques et indications prêtes à produire pour cette demande : ${task}. Respecte strictement le nombre de slides ou visuels déjà définis en amont. Décris chaque slide une par une avec sa numérotation exacte. Conserve un header, un logo, une navigation, une pagination et un footer persistants sur toute la série.`,
         kind: "design",
       });
     }
 
     plan.push({
       agentId: "dirCom",
-      task: `Tu es en validation finale. Vérifie que la stratégie, le contenu et le design répondent bien à l'objectif initial. Si quelque chose manque, signale-le clairement. Sinon, livre une synthèse finale prête pour le donneur d'ordre pour cette demande : ${task}`,
+      task: `Tu es en validation finale. Vérifie que la stratégie, le contenu et le design répondent bien à l'objectif initial. Vérifie notamment la cohérence du nombre de slides ou visuels entre les étapes. Si quelque chose manque, signale-le clairement. Sinon, livre une synthèse finale prête pour le donneur d'ordre pour cette demande : ${task}`,
       kind: "final_validation",
     });
 
@@ -1826,6 +1900,9 @@ function ConfigScreen({ config, updateCompany, updateMetier, saved, decisions })
             <TextField label="Nom" value={c.name} onChange={(v) => updateCompany("name", v)} placeholder="Ex : Studio Lumen" />
             <TextField label="Type d'activité" value={c.type} onChange={(v) => updateCompany("type", v)} placeholder="Ex : agence web…" />
             <TextField label="Ville" value={c.location} onChange={(v) => updateCompany("location", v)} placeholder="Ex : Lyon" />
+            <TextField label="Site web" value={c.website} onChange={(v) => updateCompany("website", v)} placeholder="https://votresite.fr" />
+            <TextField label="Email de contact" value={c.contactEmail} onChange={(v) => updateCompany("contactEmail", v)} placeholder="bonjour@votresite.fr" />
+            <TextField label="Téléphone de contact" value={c.contactPhone} onChange={(v) => updateCompany("contactPhone", v)} placeholder="+33 6 12 34 56 78" />
           </SectionCard>
 
           <SectionCard icon={Target} color="#F2785C" title="Mission" hint="Pourquoi votre entreprise existe.">
@@ -2281,7 +2358,7 @@ export default function AgencySaaS() {
       if (shouldGenerateDesignerImage(agentId, phase, task, { ...res, deliverable: finalDeliverable })) {
         addMsg({ type: "progress", agentId, missionId, phase: "image_generation", content: getProgressLabel(agentId, "image_generation") });
       }
-      const assets = await maybeGenerateDesignerAssets(configRef.current, agentId, task, phase, { ...res, deliverable: finalDeliverable }, missionId);
+      const assets = await maybeGenerateDesignerAssets(configRef.current, agentId, task, phase, { ...res, deliverable: finalDeliverable }, missionId, mergedContext);
       addMsg({ type: "response", agentId, content: res.response, deliverable: finalDeliverable, flags: res.flags || [], depth, extractions, missionId, phase, assets });
 
       if (finalDeliverable?.trim()) {
@@ -2339,7 +2416,13 @@ export default function AgencySaaS() {
             `Consigne de revision: ${cmd}`,
             sourceMessage.deliverable ? `Conserve le livrable global suivant et ne change que ce visuel: ${sourceMessage.deliverable}` : "",
           ].filter(Boolean).join("\n\n");
-          const result = await callImageGenerator(revisedPrompt, 1, selectedMissionId, sourceMessage.id);
+          const logoReferences = (Array.isArray(configRef.current.metiers?.da?.logo) ? configRef.current.metiers.da.logo : [])
+            .filter((item) => item?.url)
+            .slice(0, 2);
+          const result = await callImageGenerator(revisedPrompt, 1, selectedMissionId, sourceMessage.id, {
+            references: logoReferences,
+            exactCount: sourceAssets.length || 1,
+          });
           const nextUrl = result?.imageUrl || result?.images?.[0];
           if (!nextUrl) return;
 

@@ -54,6 +54,20 @@ function sanitizePathSegment(value, fallback) {
   return normalized || fallback;
 }
 
+function parseDataUrlAsset(asset, index) {
+  const source = String(asset?.url || "");
+  const match = source.match(/^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i);
+  if (!match) return null;
+  const mimeType = match[1].toLowerCase();
+  const base64Payload = match[2];
+  const extension = mimeType.split("/")[1]?.replace("jpeg", "jpg") || "png";
+  return {
+    name: sanitizePathSegment(asset?.name || `reference-${index + 1}`, `reference-${index + 1}`) + `.${extension}`,
+    mimeType,
+    buffer: Buffer.from(base64Payload, "base64"),
+  };
+}
+
 async function uploadImageToStorage(url, key, storagePath, base64Payload) {
   const binary = Buffer.from(base64Payload, "base64");
   const response = await fetch(`${url}/storage/v1/object/${STORAGE_BUCKET}/${storagePath}`, {
@@ -116,6 +130,10 @@ export default async function handler(req, res) {
   const count = Number.isFinite(requestedCount) ? Math.max(1, Math.min(10, requestedCount)) : 1;
   const conversationId = sanitizePathSegment(req.body?.conversationId, "default-conversation");
   const messageId = Number.isFinite(Number(req.body?.messageId)) ? Number(req.body.messageId) : null;
+  const exactCount = Number.isFinite(Number(req.body?.exactCount)) ? Math.max(1, Math.min(10, Number(req.body.exactCount))) : null;
+  const referenceImages = Array.isArray(req.body?.references)
+    ? req.body.references.map(parseDataUrlAsset).filter(Boolean).slice(0, 2)
+    : [];
 
   if (!apiKey) {
     res.status(400).json({ error: "No API key" });
@@ -138,27 +156,54 @@ export default async function handler(req, res) {
     const images = [];
 
     for (let index = 0; index < count; index += 1) {
-      const indexedPrompt = count > 1
-        ? `${prompt}\n\nConsigne impérative pour cette image : génère uniquement le visuel ${index + 1} sur ${count}. Une seule slide ou publication dans l'image. Aucun collage. Aucune mosaïque. Aucune planche de plusieurs slides.`
+      const indexedPrompt = count > 1 || exactCount
+        ? `${prompt}\n\nConsigne impérative pour cette image : génère uniquement le visuel ${index + 1} sur ${exactCount || count}. Une seule slide ou publication dans l'image. Aucun collage. Aucune mosaïque. Aucune planche de plusieurs slides. Si un brief slide par slide est fourni, utilise uniquement les instructions de la slide ${index + 1}. Garde le meme header, le meme logo, la meme navigation, la meme pagination et le meme footer que sur les autres slides.`
         : prompt;
+      let response;
+      let data;
 
-      const response = await fetch("https://api.openai.com/v1/images/generations", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          prompt: indexedPrompt,
-          n: 1,
-          size: "1024x1024",
-          quality: "low",
-          output_format: "png",
-        }),
-      });
+      if (referenceImages.length > 0) {
+        const form = new FormData();
+        form.append("model", model);
+        form.append("prompt", indexedPrompt);
+        form.append("size", "1024x1024");
+        form.append("quality", "low");
+        referenceImages.forEach((image, imageIndex) => {
+          const blob = new Blob([image.buffer], { type: image.mimeType });
+          const fieldName = referenceImages.length === 1 ? "image" : "image[]";
+          form.append(fieldName, blob, image.name || `reference-${imageIndex + 1}.png`);
+        });
 
-      const data = await response.json();
+        response = await fetch("https://api.openai.com/v1/images/edits", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: form,
+        });
+
+        data = await response.json();
+      }
+
+      if (!response || !response.ok) {
+        response = await fetch("https://api.openai.com/v1/images/generations", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            prompt: indexedPrompt,
+            n: 1,
+            size: "1024x1024",
+            quality: "low",
+            output_format: "png",
+          }),
+        });
+
+        data = await response.json();
+      }
 
       if (!response.ok) {
         res.status(response.status).json({ error: data?.error?.message || "Image generation failed" });
