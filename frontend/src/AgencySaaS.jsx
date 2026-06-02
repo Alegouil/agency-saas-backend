@@ -571,6 +571,31 @@ function readFileAsDataUrl(file) {
   });
 }
 
+function normalizeWorkspacePayload(rawWorkspace = {}) {
+  const rawMessages = Array.isArray(rawWorkspace.messages) ? rawWorkspace.messages : [];
+  const rawKpis = rawWorkspace.kpis && typeof rawWorkspace.kpis === "object" ? rawWorkspace.kpis : {};
+
+  return {
+    messages: rawMessages.map((message) => ({
+      ...message,
+      ts: message?.ts ? new Date(message.ts) : new Date(),
+    })),
+    kpis: {
+      ...DEFAULT_KPIS,
+      ...rawKpis,
+      deliverables: Array.isArray(rawKpis.deliverables) ? rawKpis.deliverables.map((d) => ({
+        ...d,
+        title: d?.title || extractDeliverableTitle(d?.content, "Livrable"),
+        snippet: d?.snippet || buildSnippet(d?.content, d?.title || extractDeliverableTitle(d?.content, "Livrable")),
+        ts: new Date(d?.ts),
+      })) : [],
+      flags: Array.isArray(rawKpis.flags) ? rawKpis.flags.map((f) => ({ ...f, ts: new Date(f?.ts) })) : [],
+      activity: rawKpis.activity && typeof rawKpis.activity === "object" ? rawKpis.activity : {},
+    },
+    lastId: Number.isFinite(rawWorkspace.lastId) ? rawWorkspace.lastId : 0,
+  };
+}
+
 function getProgressLabel(agentId, phase) {
   const name = AGENTS[agentId]?.name || "L'équipe";
   if (phase === "strategy") return `Analyse de ${name} en cours`;
@@ -1776,7 +1801,8 @@ function ConfigScreen({ config, updateCompany, updateMetier, saved, decisions })
 }
 
 function BilanScreen({ kpis, messages, activity, leaderboard, maxAct, onOpenMission }) {
-  const deliverablesList = Array.isArray(kpis?.deliverables) ? kpis.deliverables : [];
+  const safeKpis = kpis && typeof kpis === "object" ? kpis : DEFAULT_KPIS;
+  const deliverablesList = Array.isArray(safeKpis.deliverables) ? safeKpis.deliverables : [];
   const [deliverableFilter, setDeliverableFilter] = useState("content");
   const deliverables = [...deliverablesList].reverse();
   const latestImageGallery = buildLatestImageGallery(deliverablesList);
@@ -1792,10 +1818,10 @@ function BilanScreen({ kpis, messages, activity, leaderboard, maxAct, onOpenMiss
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 11, marginBottom: 18 }}>
         {[
-          { label: "Échanges", value: kpis.total, color: "#5B9BD5" },
-          { label: "Missions finies", value: kpis.completed, color: "#5BC77F" },
+          { label: "Échanges", value: safeKpis.total || 0, color: "#5B9BD5" },
+          { label: "Missions finies", value: safeKpis.completed || 0, color: "#5BC77F" },
           { label: "Documents", value: deliverablesList.length, color: "#E8A33D" },
-          { label: "À revoir", value: kpis.flags.length, color: "#F2785C" },
+          { label: "À revoir", value: Array.isArray(safeKpis.flags) ? safeKpis.flags.length : 0, color: "#F2785C" },
         ].map((s) => (
           <div key={s.label} style={{ ...ST.card, padding: 16, background: `linear-gradient(135deg, ${s.color}12, #fff)` }}>
             <div style={{ fontSize: 30, fontWeight: 700, color: s.color, fontFamily: "Fredoka, sans-serif", lineHeight: 1 }}>{s.value}</div>
@@ -1989,22 +2015,9 @@ export default function AgencySaaS() {
         if (typeof window !== "undefined") {
           const w = await storageAdapter.get("agencyos:workspace");
           if (w?.value) {
-            const ws = JSON.parse(w.value);
-            if (ws.messages) setMessages(ws.messages.map((m) => ({ ...m, ts: m.ts ? new Date(m.ts) : new Date() })));
-            if (ws.kpis) {
-              setKpis({
-                ...DEFAULT_KPIS,
-                ...ws.kpis,
-                deliverables: (ws.kpis.deliverables || []).map((d) => ({
-                  ...d,
-                  title: d.title || extractDeliverableTitle(d.content, "Livrable"),
-                  snippet: d.snippet || buildSnippet(d.content, d.title || extractDeliverableTitle(d.content, "Livrable")),
-                  ts: new Date(d.ts),
-                })),
-                flags: (ws.kpis.flags || []).map((f) => ({ ...f, ts: new Date(f.ts) })),
-                activity: ws.kpis.activity || {},
-              });
-            }
+            const ws = normalizeWorkspacePayload(JSON.parse(w.value));
+            setMessages(ws.messages);
+            setKpis(ws.kpis);
             idRef.current = ws.lastId || 0;
           }
         }
@@ -2214,10 +2227,17 @@ export default function AgencySaaS() {
   }, [command, processing, addMsg, addEvent, runAgent, selectedMissionId, messages, revisionMeta]);
 
   const handleContinueMission = useCallback((message, options = { type: "full" }) => {
-    const missionId = message.missionId || null;
+    const fallbackMissionId = selectedMissionId || null;
+    const missionId = message?.missionId || fallbackMissionId;
     const mission = buildMissionList(messages).find((m) => m.id === missionId);
+    if (!missionId && !mission) {
+      setRevisionMeta({ missionId: null, messageId: null, type: "full", assetIndex: null });
+      setCommand("Merci d'ameliorer ou corriger le livrable selon mon retour : ");
+      setSheet(true);
+      return;
+    }
     setSelectedMissionId(missionId);
-    setRevisionMeta({ missionId, messageId: message.id, type: options.type || "full", assetIndex: options.assetIndex ?? null });
+    setRevisionMeta({ missionId, messageId: message?.id ?? null, type: options.type || "full", assetIndex: options.assetIndex ?? null });
     setCommand(options.type === "image"
       ? `Regenerer uniquement le visuel ${Number(options.assetIndex) + 1} en conservant tous les autres visuels inchanges. Ajustement souhaite : `
       : `Retour sur le livrable final : merci d'ameliorer, corriger ou completer la mission selon mon retour. Ne modifie que les elements mentionnes : `);
@@ -2226,7 +2246,7 @@ export default function AgencySaaS() {
       setTarget(mission.target);
     }
     setSheet(true);
-  }, [messages]);
+  }, [messages, selectedMissionId]);
 
   const handleSuggestedAction = useCallback((message, action) => {
     setSelectedMissionId(message.missionId || null);
@@ -2278,7 +2298,7 @@ export default function AgencySaaS() {
     }
   };
 
-  const activity = kpis.activity;
+  const activity = kpis?.activity && typeof kpis.activity === "object" ? kpis.activity : {};
   const maxAct = Math.max(...Object.values(activity), 1);
   const leaderboard = Object.entries(activity).sort(([, a], [, b]) => b - a);
 
@@ -2286,7 +2306,7 @@ export default function AgencySaaS() {
     { id: "missions", icon: Home, label: "Missions" },
     { id: "team", icon: Users, label: "Équipe" },
     { id: "company", icon: Settings, label: "Réglages" },
-    { id: "bilan", icon: BarChart3, label: "Bilan", badge: kpis.deliverables.length + kpis.flags.length },
+    { id: "bilan", icon: BarChart3, label: "Bilan", badge: (Array.isArray(kpis?.deliverables) ? kpis.deliverables.length : 0) + (Array.isArray(kpis?.flags) ? kpis.flags.length : 0) },
   ];
 
   const studioName = config.company.name || "Mon studio";
