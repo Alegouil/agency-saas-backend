@@ -853,7 +853,7 @@ function MissionStatusPill({ active, label }) {
   );
 }
 
-function AssetGallery({ assets = [], onOpen }) {
+function AssetGallery({ assets = [], onOpen, onReviseAsset = null }) {
   if (!assets.length) return null;
 
   const mainAsset = assets[0];
@@ -873,11 +873,18 @@ function AssetGallery({ assets = [], onOpen }) {
       {assets.length > 1 && (
         <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingTop: 8 }}>
           {assets.map((asset, index) => (
-            <button key={`${asset.url}-${index}`} onClick={() => onOpen?.(assets, index)} style={{ border: "none", padding: 0, background: "transparent", cursor: "pointer", flexShrink: 0 }}>
-              <div style={{ width: 74, borderRadius: 14, overflow: "hidden", border: "1px solid #F0E8DB", background: "#fff" }}>
-                <img src={asset.url} alt={asset.alt || "Miniature visuelle"} style={{ display: "block", width: "100%", aspectRatio: "1 / 1", objectFit: "cover" }} />
-              </div>
-            </button>
+            <div key={`${asset.url}-${index}`} style={{ flexShrink: 0 }}>
+              <button onClick={() => onOpen?.(assets, index)} style={{ border: "none", padding: 0, background: "transparent", cursor: "pointer", display: "block" }}>
+                <div style={{ width: 74, borderRadius: 14, overflow: "hidden", border: "1px solid #F0E8DB", background: "#fff" }}>
+                  <img src={asset.url} alt={asset.alt || "Miniature visuelle"} style={{ display: "block", width: "100%", aspectRatio: "1 / 1", objectFit: "cover" }} />
+                </div>
+              </button>
+              {onReviseAsset && (
+                <button onClick={() => onReviseAsset(asset, index)} style={{ marginTop: 6, width: 74, padding: "6px 0", borderRadius: 10, border: "1px solid #F2DDAE", background: "#FCF3E1", color: "#A76B00", fontSize: 11, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
+                  Faire V2
+                </button>
+              )}
+            </div>
           ))}
         </div>
       )}
@@ -1185,12 +1192,12 @@ function FeedMsg({ m, expanded, setExpanded, onValidate, onContinueMission, onAc
         )}
         {!compact && m.missionId && (m.phase === "final_validation" || m.deliverable?.trim()) && (
           <div style={{ display: "flex", gap: 8, marginTop: 9 }}>
-            <button onClick={() => onContinueMission?.(m)} style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #F2DDAE", background: "#FCF3E1", color: "#A76B00", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "Nunito, sans-serif" }}>
-              Demander une revision
+            <button onClick={() => onContinueMission?.(m, { type: "full" })} style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #F2DDAE", background: "#FCF3E1", color: "#A76B00", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "Nunito, sans-serif" }}>
+              Revoir le livrable
             </button>
           </div>
         )}
-        {!compact && <AssetGallery assets={m.assets || []} onOpen={onOpenAssets} />}
+        {!compact && <AssetGallery assets={m.assets || []} onOpen={onOpenAssets} onReviseAsset={(asset, index) => onContinueMission?.(m, { type: "image", assetIndex: index, asset })} />}
       </div>
     </div>
   );
@@ -1325,6 +1332,7 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
   const relayPreview = mission.relayPreview;
   const [openRelayId, setOpenRelayId] = useState(null);
   const messageRefs = useRef({});
+  const containerRef = useRef(null);
   const relays = mission.messages
     .filter((m) => m.type === "delegation")
     .map((relay) => ({
@@ -1333,15 +1341,21 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
     }));
 
   useEffect(() => {
-    if (!focusMessageId) return;
-    const node = messageRefs.current[focusMessageId];
-    if (node) {
-      node.scrollIntoView({ behavior: "smooth", block: "end" });
-    }
+    const run = () => {
+      if (focusMessageId) {
+        const node = messageRefs.current[focusMessageId];
+        if (node) node.scrollIntoView({ behavior: "smooth", block: "end" });
+        return;
+      }
+      const container = containerRef.current;
+      if (container) container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+    };
+    const timer = setTimeout(run, 80);
+    return () => clearTimeout(timer);
   }, [focusMessageId, mission.id]);
 
   return (
-    <div style={{ height: "100%", overflowY: "auto", padding: "14px 16px 18px" }}>
+    <div ref={containerRef} style={{ height: "100%", overflowY: "auto", padding: "14px 16px 18px" }}>
       <button onClick={onBack} style={{ marginBottom: 12, border: "none", background: "transparent", color: "#9A93A8", fontSize: 12.5, fontWeight: 700, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
         ← Retour aux missions
       </button>
@@ -1404,7 +1418,7 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
           {mission.latestVisualResponse && mission.latestVisualResponse.id !== finalResponse.id && (
             <div style={{ ...ST.card, padding: 14, marginTop: 12 }}>
               <div style={{ fontSize: 13, color: "#A89A86", fontFamily: "Nunito, sans-serif", fontWeight: 700, marginBottom: 8 }}>Visuels retenus</div>
-              <AssetGallery assets={mission.latestVisualResponse.assets || []} onOpen={onOpenAssets} />
+              <AssetGallery assets={mission.latestVisualResponse.assets || []} onOpen={onOpenAssets} onReviseAsset={(asset, index) => onContinueMission(mission.latestVisualResponse, { type: "image", assetIndex: index, asset })} />
             </div>
           )}
         </div>
@@ -1425,7 +1439,7 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
         {!mission.archived && (
           <>
-            <button onClick={() => onContinueMission(mission.finalResponse || mission.latestResponse || mission.command)} style={{ flex: 1, padding: "11px 14px", borderRadius: 14, border: "1px solid #F2DDAE", background: "#FCF3E1", color: "#A76B00", fontSize: 13, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
+            <button onClick={() => onContinueMission(mission.finalResponse || mission.latestResponse || mission.command, { type: "full" })} style={{ flex: 1, padding: "11px 14px", borderRadius: 14, border: "1px solid #F2DDAE", background: "#FCF3E1", color: "#A76B00", fontSize: 13, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
               Demander une revision
             </button>
             <button onClick={() => onArchive(mission.id)} style={{ flex: 1, padding: "11px 14px", borderRadius: 14, border: "none", background: "linear-gradient(135deg, #5BC77F, #42B76B)", color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
@@ -1765,7 +1779,7 @@ function BilanScreen({ kpis, messages, activity, leaderboard, maxAct, onOpenMiss
                   )}
                 </div>
                 <div style={{ fontSize: 14, fontWeight: 700, color: "#3D3A4E", fontFamily: "Fredoka, sans-serif", marginBottom: 6 }}>{title}</div>
-                {d.hasAssets && d.assets?.[0]?.url && (
+                {d.assets?.[0]?.url && (
                   <div style={{ marginBottom: 8, overflow: "hidden", borderRadius: 14, border: "1px solid #F0E8DB", background: "#F7F1E6" }}>
                     <img src={d.assets[0].url} alt={d.assets[0].alt || title} style={{ display: "block", width: "100%", aspectRatio: "4 / 5", objectFit: "cover" }} />
                   </div>
@@ -1782,18 +1796,28 @@ function BilanScreen({ kpis, messages, activity, leaderboard, maxAct, onOpenMiss
   );
 }
 
-function MissionSheet({ command, setCommand, onSend, onClose }) {
+function MissionSheet({ command, setCommand, onSend, onClose, revisionMeta = null }) {
   const suggestedLead = routeObjectiveToLead(command);
   const a = AGENTS[suggestedLead];
   return (
     <>
-      <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(60,45,30,0.35)", backdropFilter: "blur(2px)", animation: "fadeBg 0.25s ease", zIndex: 10 }} />
-      <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, background: "#FBF6EE", borderRadius: "28px 28px 0 0", padding: "10px 18px calc(env(safe-area-inset-bottom, 0px) + 22px)", animation: "sheetUp 0.4s cubic-bezier(0.34,1.4,0.64,1)", zIndex: 11, maxHeight: "88%", overflowY: "auto" }}>
+      <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(60,45,30,0.35)", backdropFilter: "blur(2px)", animation: "fadeBg 0.25s ease", zIndex: 40 }} />
+      <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, background: "#FBF6EE", borderRadius: "28px 28px 0 0", padding: "10px 18px calc(env(safe-area-inset-bottom, 0px) + 22px)", animation: "sheetUp 0.4s cubic-bezier(0.34,1.4,0.64,1)", zIndex: 41, maxHeight: "88%", overflowY: "auto" }}>
         <div style={{ width: 40, height: 5, borderRadius: 3, background: "#E5DAC8", margin: "0 auto 16px" }} />
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
           <div style={{ fontSize: 19, fontWeight: 600, color: "#3D3A4E", fontFamily: "Fredoka, sans-serif" }}>Nouvelle mission</div>
           <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: "50%", background: "#fff", border: "1px solid #F0E8DB", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><X size={17} color="#9A93A8" /></button>
         </div>
+        {revisionMeta && (
+          <div style={{ background: "#FCF3E1", border: "1px solid #F2DDAE", borderRadius: 14, padding: "11px 13px", marginBottom: 14 }}>
+            <div style={{ fontSize: 12, color: "#A76B00", fontWeight: 800, fontFamily: "Nunito, sans-serif", marginBottom: 4 }}>
+              {revisionMeta.type === "image" ? `Revision ciblee · visuel ${revisionMeta.assetIndex + 1}` : "Revision du livrable"}
+            </div>
+            <div style={{ fontSize: 12.5, color: "#7A6B52", fontFamily: "Nunito, sans-serif", lineHeight: 1.45 }}>
+              {revisionMeta.type === "image" ? "Seul ce visuel sera regenere. Les autres resteront inchanges et une V2 sera ajoutee a la conversation." : "Une nouvelle version du livrable sera creee dans cette mission."}
+            </div>
+          </div>
+        )}
 
         <div style={{ display: "flex", gap: 11, alignItems: "center", padding: "12px 14px", background: `${a.color}12`, border: `1.5px solid ${a.color}35`, borderRadius: 16, marginBottom: 14 }}>
           <Character id={suggestedLead} size={42} badge />
@@ -1842,6 +1866,7 @@ export default function AgencySaaS() {
   const [thinking, setThinking] = useState([]);
   const [selectedMissionId, setSelectedMissionId] = useState(null);
   const [focusMessageId, setFocusMessageId] = useState(null);
+  const [revisionMeta, setRevisionMeta] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [lightbox, setLightbox] = useState(null);
 
@@ -1998,11 +2023,75 @@ export default function AgencySaaS() {
   const handleSend = useCallback(async () => {
     if (!command.trim() || processing) return;
     const cmd = command.trim();
+    if (revisionMeta?.type === "image" && selectedMissionId) {
+      const mission = buildMissionList(messages).find((m) => m.id === selectedMissionId);
+      const sourceMessage = mission?.messages.find((item) => item.id === revisionMeta.messageId) || mission?.latestVisualResponse || null;
+      const sourceAssets = sourceMessage?.assets || [];
+      const sourceAsset = sourceAssets[revisionMeta.assetIndex];
+      if (!sourceMessage || !sourceAsset) return;
+
+      setCommand("");
+      setSheet(false);
+      setTab("missions");
+      setProcessing(true);
+      setProcessingMissionId(selectedMissionId);
+      setFocusMessageId(null);
+      try {
+        addMsg({ type: "progress", agentId: sourceMessage.agentId || mission.target, missionId: selectedMissionId, phase: "image_generation", content: "Generation de la V2 du visuel en cours" });
+        const revisedPrompt = [
+          sourceAsset.prompt || "",
+          `Consigne de revision: ${cmd}`,
+          sourceMessage.deliverable ? `Conserve le livrable global suivant et ne change que ce visuel: ${sourceMessage.deliverable}` : "",
+        ].filter(Boolean).join("\n\n");
+        const result = await callImageGenerator(revisedPrompt, 1, selectedMissionId, sourceMessage.id);
+        const nextUrl = result?.imageUrl || result?.images?.[0];
+        if (!nextUrl) return;
+
+        const nextAssets = sourceAssets.map((asset, index) => (
+          index === revisionMeta.assetIndex
+            ? { ...asset, url: nextUrl, prompt: revisedPrompt, revisedPrompt: cmd, version: (asset.version || 1) + 1 }
+            : asset
+        ));
+        const title = `${extractDeliverableTitle(sourceMessage.deliverable || sourceMessage.content, "Livrable")} · V2`;
+        addMsg({
+          type: "response",
+          agentId: sourceMessage.agentId || mission.target,
+          content: `Revision du visuel ${revisionMeta.assetIndex + 1} effectuee. Les autres elements du livrable sont conserves.`,
+          deliverable: sourceMessage.deliverable || sourceMessage.content,
+          flags: [],
+          missionId: selectedMissionId,
+          phase: sourceMessage.phase || "final_validation",
+          assets: nextAssets,
+        });
+        setKpis((p) => ({
+          ...p,
+          deliverables: [...p.deliverables, {
+            missionId: selectedMissionId,
+            messageId: idRef.current,
+            agentId: sourceMessage.agentId || mission.target,
+            title,
+            snippet: `V2 du visuel ${revisionMeta.assetIndex + 1}`,
+            content: sourceMessage.deliverable || sourceMessage.content,
+            ts: new Date(),
+            task: cmd,
+            hasAssets: true,
+            assetCount: nextAssets.length,
+            assets: nextAssets,
+          }],
+        }));
+      } finally {
+        setRevisionMeta(null);
+        setProcessing(false);
+        setProcessingMissionId(null);
+      }
+      return;
+    }
+
     const missionId = selectedMissionId || `mission-${Date.now()}`;
     const existingMission = selectedMissionId ? buildMissionList(messages).find((m) => m.id === selectedMissionId) : null;
     const leadAgentId = existingMission?.target || routeObjectiveToLead(cmd);
     const plan = buildExecutionPlan(leadAgentId, cmd);
-    setCommand(""); setSheet(false); setTab("missions"); setProcessing(true); setFocusMessageId(null);
+    setCommand(""); setSheet(false); setTab("missions"); setProcessing(true); setFocusMessageId(null); setRevisionMeta(null);
     setProcessingMissionId(missionId);
     setSelectedMissionId(missionId);
     addMsg({ type: "command", target: leadAgentId, content: cmd, missionId });
@@ -2021,13 +2110,16 @@ export default function AgencySaaS() {
       setProcessing(false);
       setProcessingMissionId(null);
     }
-  }, [command, processing, addMsg, addEvent, runAgent, selectedMissionId, messages]);
+  }, [command, processing, addMsg, addEvent, runAgent, selectedMissionId, messages, revisionMeta]);
 
-  const handleContinueMission = useCallback((message) => {
+  const handleContinueMission = useCallback((message, options = { type: "full" }) => {
     const missionId = message.missionId || null;
     const mission = buildMissionList(messages).find((m) => m.id === missionId);
     setSelectedMissionId(missionId);
-    setCommand(`Retour sur le livrable final : merci d'améliorer, corriger ou compléter la mission selon mon retour.`);
+    setRevisionMeta({ missionId, messageId: message.id, type: options.type || "full", assetIndex: options.assetIndex ?? null });
+    setCommand(options.type === "image"
+      ? `Regenerer uniquement le visuel ${Number(options.assetIndex) + 1} en conservant tous les autres visuels inchanges. Ajustement souhaite : `
+      : `Retour sur le livrable final : merci d'ameliorer, corriger ou completer la mission selon mon retour. Ne modifie que les elements mentionnes : `);
     setFocusMessageId(null);
     if (mission?.target) {
       setTarget(mission.target);
@@ -2166,7 +2258,7 @@ export default function AgencySaaS() {
         }} />)}
       </div>
 
-      {sheet && <MissionSheet command={command} setCommand={setCommand} onSend={handleSend} onClose={() => setSheet(false)} />}
+      {sheet && <MissionSheet command={command} setCommand={setCommand} onSend={handleSend} onClose={() => { setSheet(false); setRevisionMeta(null); }} revisionMeta={revisionMeta} />}
       <ConfirmDialog dialog={confirmDialog} onCancel={() => setConfirmDialog(null)} onConfirm={() => {
         if (!confirmDialog) return;
         const { missionId, action } = confirmDialog;
