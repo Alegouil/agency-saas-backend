@@ -1,7 +1,7 @@
 {
   "name": "Agency Agents",
   "short_name": "Agents",
-  "start_url": "./",
+  "start_url": "/",
   "display": "standalone",
   "background_color": "#FBF6EE",
   "theme_color": "#F2785C",

@@ -614,9 +614,10 @@ function deliverableHasImages(deliverable) {
 }
 
 function buildLatestImageGallery(deliverables = []) {
+  const items = Array.isArray(deliverables) ? deliverables : [];
   const latestByMission = new Map();
 
-  deliverables.forEach((deliverable) => {
+  items.forEach((deliverable) => {
     if (!deliverableHasImages(deliverable) || !deliverable?.missionId) return;
     const current = latestByMission.get(deliverable.missionId);
     const nextTs = new Date(deliverable.ts || 0).getTime();
@@ -651,11 +652,15 @@ function buildDesignerImagePrompt(config, task, response) {
     comStyle.editorial ? `Ligne éditoriale : ${comStyle.editorial}.` : "",
   ].filter(Boolean);
 
+  const carouselLike = /carrousel|carousel|slides?|linkedin/i.test(`${task || ""}\n${response?.deliverable || ""}\n${response?.response || ""}`);
+
   return [
     "Crée un visuel marketing premium, crédible et prêt à présenter à un client.",
     "Le rendu doit être élégant, contemporain, lisible sur mobile et cohérent avec une communication B2B haut de gamme.",
     "Évite les blocs de texte trop denses et privilégie une composition forte, claire et éditoriale.",
     "Si plusieurs visuels sont demandés, génère une image autonome par visuel. Jamais de collage, jamais plusieurs publications dans une seule image.",
+    carouselLike ? "Pour un carrousel, conserve une structure persistante sur toutes les slides : header, logo, navigation, footer, marges, grille et système typographique cohérents d'une slide à l'autre." : "",
+    carouselLike ? "Ne change d'une slide à l'autre que le contenu éditorial, l'illustration principale et les accents utiles. L'habillage de base doit rester stable et reconnaissable." : "",
     task ? `Objectif utilisateur : ${task}` : "",
     response?.deliverable ? `Direction créative à suivre : ${response.deliverable}` : "",
     response?.response ? `Contexte complémentaire : ${response.response}` : "",
@@ -1771,9 +1776,10 @@ function ConfigScreen({ config, updateCompany, updateMetier, saved, decisions })
 }
 
 function BilanScreen({ kpis, messages, activity, leaderboard, maxAct, onOpenMission }) {
+  const deliverablesList = Array.isArray(kpis?.deliverables) ? kpis.deliverables : [];
   const [deliverableFilter, setDeliverableFilter] = useState("content");
-  const deliverables = [...(kpis.deliverables || [])].reverse();
-  const latestImageGallery = buildLatestImageGallery(kpis.deliverables || []);
+  const deliverables = [...deliverablesList].reverse();
+  const latestImageGallery = buildLatestImageGallery(deliverablesList);
   const filteredDeliverables = deliverables.filter((d) => {
     if (deliverableFilter === "images") return deliverableHasImages(d);
     return !deliverableHasImages(d);
@@ -1788,7 +1794,7 @@ function BilanScreen({ kpis, messages, activity, leaderboard, maxAct, onOpenMiss
         {[
           { label: "Échanges", value: kpis.total, color: "#5B9BD5" },
           { label: "Missions finies", value: kpis.completed, color: "#5BC77F" },
-          { label: "Documents", value: kpis.deliverables.length, color: "#E8A33D" },
+          { label: "Documents", value: deliverablesList.length, color: "#E8A33D" },
           { label: "À revoir", value: kpis.flags.length, color: "#F2785C" },
         ].map((s) => (
           <div key={s.label} style={{ ...ST.card, padding: 16, background: `linear-gradient(135deg, ${s.color}12, #fff)` }}>
@@ -1798,7 +1804,7 @@ function BilanScreen({ kpis, messages, activity, leaderboard, maxAct, onOpenMiss
         ))}
       </div>
 
-      {leaderboard[0] && (
+      {leaderboard[0] && AGENTS[leaderboard[0][0]] && (
         <div style={{ ...ST.card, padding: 15, marginBottom: 18, display: "flex", alignItems: "center", gap: 14, background: `linear-gradient(135deg, ${AGENTS[leaderboard[0][0]].color}15, #fff)` }}>
           <Character id={leaderboard[0][0]} size={52} badge />
           <div>
@@ -1809,7 +1815,7 @@ function BilanScreen({ kpis, messages, activity, leaderboard, maxAct, onOpenMiss
         </div>
       )}
 
-      {kpis.deliverables.length > 0 && (
+      {deliverablesList.length > 0 && (
         <div style={{ marginBottom: 18 }}>
           <div style={{ fontSize: 15, fontWeight: 600, color: "#3D3A4E", fontFamily: "Fredoka, sans-serif", marginBottom: 12 }}>Documents créés</div>
           <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 10, marginBottom: 8 }}>
@@ -1823,7 +1829,7 @@ function BilanScreen({ kpis, messages, activity, leaderboard, maxAct, onOpenMiss
             ))}
           </div>
           {deliverableFilter !== "images" && filteredDeliverables.map((d, i) => {
-            const a = AGENTS[d.agentId];
+            const a = AGENTS[d.agentId] || { name: "Equipe", color: "#9A93A8" };
             const missionId = resolveDeliverableMissionId(messages, d);
             const messageId = resolveDeliverableMessageId(messages, d);
             const title = d.title || extractDeliverableTitle(d.content, "Livrable");
