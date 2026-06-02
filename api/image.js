@@ -181,7 +181,7 @@ export default async function handler(req, res) {
         form.append("prompt", indexedPrompt);
         form.append("size", "1024x1024");
         form.append("quality", "low");
-        form.append("response_format", "b64_json");
+        form.append("output_format", "png");
         referenceImages.forEach((image, imageIndex) => {
           const blob = new Blob([image.buffer], { type: image.mimeType });
           const fieldName = referenceImages.length === 1 ? "image" : "image[]";
@@ -216,7 +216,6 @@ export default async function handler(req, res) {
             size: "1024x1024",
             quality: "low",
             output_format: "png",
-            response_format: "b64_json",
           }),
         });
 
