@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   Home, Users, Building2, BarChart3, Plus, X, ArrowUp, ChevronRight, ChevronLeft, Check, Sparkles, Info, Settings, Trash2, Cloud, Eye, AlertCircle, HelpCircle, MessageSquare, TrendingUp, LoaderCircle,
   Crown, Cog, Palette, Search, Camera, Code, Monitor, Wrench, FlaskConical, Package,
@@ -574,6 +574,9 @@ function readFileAsDataUrl(file) {
 function normalizeWorkspacePayload(rawWorkspace = {}) {
   const rawMessages = Array.isArray(rawWorkspace.messages) ? rawWorkspace.messages : [];
   const rawKpis = rawWorkspace.kpis && typeof rawWorkspace.kpis === "object" ? rawWorkspace.kpis : {};
+  const rawDeliverables = Array.isArray(rawKpis.deliverables)
+    ? rawKpis.deliverables.filter((item) => item && typeof item === "object")
+    : [];
 
   return {
     messages: rawMessages.map((message) => ({
@@ -583,12 +586,12 @@ function normalizeWorkspacePayload(rawWorkspace = {}) {
     kpis: {
       ...DEFAULT_KPIS,
       ...rawKpis,
-      deliverables: Array.isArray(rawKpis.deliverables) ? rawKpis.deliverables.map((d) => ({
+      deliverables: rawDeliverables.map((d) => ({
         ...d,
         title: d?.title || extractDeliverableTitle(d?.content, "Livrable"),
         snippet: d?.snippet || buildSnippet(d?.content, d?.title || extractDeliverableTitle(d?.content, "Livrable")),
         ts: new Date(d?.ts),
-      })) : [],
+      })),
       flags: Array.isArray(rawKpis.flags) ? rawKpis.flags.map((f) => ({ ...f, ts: new Date(f?.ts) })) : [],
       activity: rawKpis.activity && typeof rawKpis.activity === "object" ? rawKpis.activity : {},
     },
@@ -869,7 +872,7 @@ function Hair({ style, color }) {
 }
 
 function Character({ id, size = 60, radius = "50%", status = "idle", badge = false }) {
-  const a = AGENTS[id];
+  const a = AGENTS[id] || AGENTS.ceo;
   const skin = SKIN[a.skin], hair = HAIRC[a.hair], shirt = a.color;
   return (
     <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
@@ -1802,7 +1805,9 @@ function ConfigScreen({ config, updateCompany, updateMetier, saved, decisions })
 
 function BilanScreen({ kpis, messages, activity, leaderboard, maxAct, onOpenMission }) {
   const safeKpis = kpis && typeof kpis === "object" ? kpis : DEFAULT_KPIS;
-  const deliverablesList = Array.isArray(safeKpis.deliverables) ? safeKpis.deliverables : [];
+  const deliverablesList = Array.isArray(safeKpis.deliverables)
+    ? safeKpis.deliverables.filter((item) => item && typeof item === "object")
+    : [];
   const [deliverableFilter, setDeliverableFilter] = useState("content");
   const deliverables = [...deliverablesList].reverse();
   const latestImageGallery = buildLatestImageGallery(deliverablesList);
@@ -1863,7 +1868,7 @@ function BilanScreen({ kpis, messages, activity, leaderboard, maxAct, onOpenMiss
             return (
               <button key={i} onClick={() => missionId && onOpenMission(missionId, messageId)} style={{ ...ST.card, width: "100%", padding: 14, marginBottom: 10, textAlign: "left", border: "1px solid #F0E8DB", cursor: missionId ? "pointer" : "default" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 9 }}>
-                  <Character id={d.agentId} size={32} />
+                  <Character id={a.id || d.agentId || "ceo"} size={32} />
                   <span style={{ fontSize: 13.5, fontWeight: 700, color: "#3D3A4E", fontFamily: "Fredoka, sans-serif" }}>{a.name}</span>
                   <span style={{ marginLeft: "auto", fontSize: 11, color: "#C3B8A6", fontFamily: "Nunito, sans-serif" }}>{formatDateTime(d.ts)}</span>
                 </div>
@@ -1970,6 +1975,42 @@ function MissionSheet({ command, setCommand, onSend, onClose, revisionMeta = nul
       </div>
     </>
   );
+}
+
+class ScreenErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error) {
+    console.error("Screen render error", error);
+  }
+
+  componentDidUpdate(prevProps) {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ height: "100%", padding: "24px 16px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ ...ST.card, padding: 18, width: "100%", maxWidth: 420 }}>
+            <div style={{ fontSize: 17, fontWeight: 700, color: "#3D3A4E", fontFamily: "Fredoka, sans-serif", marginBottom: 8 }}>Cette vue a rencontre un probleme</div>
+            <div style={{ fontSize: 13.5, color: "#7A7488", fontFamily: "Nunito, sans-serif", lineHeight: 1.55 }}>Essaie de revenir a un autre onglet puis de rouvrir cet ecran. Si le probleme persiste, recharge l'application.</div>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -2142,63 +2183,65 @@ export default function AgencySaaS() {
       const sourceMessage = mission?.messages.find((item) => item.id === revisionMeta.messageId) || mission?.latestVisualResponse || null;
       const sourceAssets = sourceMessage?.assets || [];
       const sourceAsset = sourceAssets[revisionMeta.assetIndex];
-      if (!sourceMessage || !sourceAsset) return;
+      if (!sourceMessage || !sourceAsset) {
+        setRevisionMeta((current) => current ? { ...current, type: "full", assetIndex: null } : null);
+      } else {
+        setCommand("");
+        setSheet(false);
+        setTab("missions");
+        setProcessing(true);
+        setProcessingMissionId(selectedMissionId);
+        setFocusMessageId(null);
+        try {
+          addMsg({ type: "progress", agentId: sourceMessage.agentId || mission.target, missionId: selectedMissionId, phase: "image_generation", content: "Generation de la V2 du visuel en cours" });
+          const revisedPrompt = [
+            sourceAsset.prompt || "",
+            `Consigne de revision: ${cmd}`,
+            sourceMessage.deliverable ? `Conserve le livrable global suivant et ne change que ce visuel: ${sourceMessage.deliverable}` : "",
+          ].filter(Boolean).join("\n\n");
+          const result = await callImageGenerator(revisedPrompt, 1, selectedMissionId, sourceMessage.id);
+          const nextUrl = result?.imageUrl || result?.images?.[0];
+          if (!nextUrl) return;
 
-      setCommand("");
-      setSheet(false);
-      setTab("missions");
-      setProcessing(true);
-      setProcessingMissionId(selectedMissionId);
-      setFocusMessageId(null);
-      try {
-        addMsg({ type: "progress", agentId: sourceMessage.agentId || mission.target, missionId: selectedMissionId, phase: "image_generation", content: "Generation de la V2 du visuel en cours" });
-        const revisedPrompt = [
-          sourceAsset.prompt || "",
-          `Consigne de revision: ${cmd}`,
-          sourceMessage.deliverable ? `Conserve le livrable global suivant et ne change que ce visuel: ${sourceMessage.deliverable}` : "",
-        ].filter(Boolean).join("\n\n");
-        const result = await callImageGenerator(revisedPrompt, 1, selectedMissionId, sourceMessage.id);
-        const nextUrl = result?.imageUrl || result?.images?.[0];
-        if (!nextUrl) return;
-
-        const nextAssets = sourceAssets.map((asset, index) => (
-          index === revisionMeta.assetIndex
-            ? { ...asset, url: nextUrl, prompt: revisedPrompt, revisedPrompt: cmd, version: (asset.version || 1) + 1 }
-            : asset
-        ));
-        const title = `${extractDeliverableTitle(sourceMessage.deliverable || sourceMessage.content, "Livrable")} · V2`;
-        addMsg({
-          type: "response",
-          agentId: sourceMessage.agentId || mission.target,
-          content: `Revision du visuel ${revisionMeta.assetIndex + 1} effectuee. Les autres elements du livrable sont conserves.`,
-          deliverable: sourceMessage.deliverable || sourceMessage.content,
-          flags: [],
-          missionId: selectedMissionId,
-          phase: sourceMessage.phase || "final_validation",
-          assets: nextAssets,
-        });
-        setKpis((p) => ({
-          ...p,
-          deliverables: [...p.deliverables, {
-            missionId: selectedMissionId,
-            messageId: idRef.current,
+          const nextAssets = sourceAssets.map((asset, index) => (
+            index === revisionMeta.assetIndex
+              ? { ...asset, url: nextUrl, prompt: revisedPrompt, revisedPrompt: cmd, version: (asset.version || 1) + 1 }
+              : asset
+          ));
+          const title = `${extractDeliverableTitle(sourceMessage.deliverable || sourceMessage.content, "Livrable")} · V2`;
+          addMsg({
+            type: "response",
             agentId: sourceMessage.agentId || mission.target,
-            title,
-            snippet: `V2 du visuel ${revisionMeta.assetIndex + 1}`,
-            content: sourceMessage.deliverable || sourceMessage.content,
-            ts: new Date(),
-            task: cmd,
-            hasAssets: true,
-            assetCount: nextAssets.length,
+            content: `Revision du visuel ${revisionMeta.assetIndex + 1} effectuee. Les autres elements du livrable sont conserves.`,
+            deliverable: sourceMessage.deliverable || sourceMessage.content,
+            flags: [],
+            missionId: selectedMissionId,
+            phase: sourceMessage.phase || "final_validation",
             assets: nextAssets,
-          }],
-        }));
-      } finally {
-        setRevisionMeta(null);
-        setProcessing(false);
-        setProcessingMissionId(null);
+          });
+          setKpis((p) => ({
+            ...p,
+            deliverables: [...p.deliverables, {
+              missionId: selectedMissionId,
+              messageId: idRef.current,
+              agentId: sourceMessage.agentId || mission.target,
+              title,
+              snippet: `V2 du visuel ${revisionMeta.assetIndex + 1}`,
+              content: sourceMessage.deliverable || sourceMessage.content,
+              ts: new Date(),
+              task: cmd,
+              hasAssets: true,
+              assetCount: nextAssets.length,
+              assets: nextAssets,
+            }],
+          }));
+        } finally {
+          setRevisionMeta(null);
+          setProcessing(false);
+          setProcessingMissionId(null);
+        }
+        return;
       }
-      return;
     }
 
     const missionId = selectedMissionId || `mission-${Date.now()}`;
@@ -2356,10 +2399,12 @@ export default function AgencySaaS() {
 
       {/* Screen */}
       <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
-        {tab === "missions" && <MissionsScreen messages={messages} expanded={expanded} setExpanded={setExpanded} onQuick={(q) => { setSelectedMissionId(null); setFocusMessageId(null); setCommand(q.cmd); setSheet(true); }} onValidate={handleValidate} onContinueMission={handleContinueMission} onAction={handleSuggestedAction} selectedMissionId={selectedMissionId} setSelectedMissionId={setSelectedMissionId} onArchiveMission={handleArchiveMission} onOpenAssets={openAssetPreview} processingMissionId={processingMissionId} focusMessageId={focusMessageId} />}
-        {tab === "team" && <TeamScreen statuses={statuses} activity={activity} onOpen={() => {}} />}
-        {tab === "company" && <ConfigScreen config={config} updateCompany={updateCompany} updateMetier={updateMetier} saved={saved} decisions={config.decisions || []} />}
-        {tab === "bilan" && <BilanScreen kpis={kpis} messages={messages} activity={activity} leaderboard={leaderboard} maxAct={maxAct} onOpenMission={openMissionFromAnywhere} />}
+        <ScreenErrorBoundary resetKey={`${tab}-${messages.length}-${selectedMissionId || "none"}`}>
+          {tab === "missions" && <MissionsScreen messages={messages} expanded={expanded} setExpanded={setExpanded} onQuick={(q) => { setSelectedMissionId(null); setFocusMessageId(null); setCommand(q.cmd); setSheet(true); }} onValidate={handleValidate} onContinueMission={handleContinueMission} onAction={handleSuggestedAction} selectedMissionId={selectedMissionId} setSelectedMissionId={setSelectedMissionId} onArchiveMission={handleArchiveMission} onOpenAssets={openAssetPreview} processingMissionId={processingMissionId} focusMessageId={focusMessageId} />}
+          {tab === "team" && <TeamScreen statuses={statuses} activity={activity} onOpen={() => {}} />}
+          {tab === "company" && <ConfigScreen config={config} updateCompany={updateCompany} updateMetier={updateMetier} saved={saved} decisions={config.decisions || []} />}
+          {tab === "bilan" && <BilanScreen kpis={kpis} messages={messages} activity={activity} leaderboard={leaderboard} maxAct={maxAct} onOpenMission={openMissionFromAnywhere} />}
+        </ScreenErrorBoundary>
       </div>
 
       {/* Bottom nav */}
