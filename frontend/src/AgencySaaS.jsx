@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   Home, Users, Building2, BarChart3, Plus, X, ArrowUp, ChevronRight, ChevronLeft, Check, Sparkles, Info, Settings, Trash2, Cloud, Eye, AlertCircle, HelpCircle, MessageSquare, TrendingUp, LoaderCircle,
   Crown, Cog, Palette, Search, Camera, Code, Monitor, Wrench, FlaskConical, Package,
-  ClipboardList, Calendar, Wallet, Map, Target, Heart, Megaphone, Smartphone, Lightbulb, Layers, BarChart3 as ChartIcon, Brain, Zap,
+  ClipboardList, Calendar, Wallet, Map as MapIcon, Target, Heart, Megaphone, Smartphone, Lightbulb, Layers, BarChart3 as ChartIcon, Brain, Zap,
 } from "lucide-react";
 
 const STORAGE_ENDPOINT = "/api/state";
@@ -188,7 +188,7 @@ const AGENTS = {
   dirConseil:      { name: "Le conseiller",  role: "Directeur conseil",       desc: "Cadre les projets.",                                                               color: "#EBB94A", Icon: ClipboardList, skin: 1, hair: 3, hairStyle: "short" },
   chefProjet:      { name: "L'organisateur", role: "Chef de projet",          desc: "Tient le planning.",                                                               color: "#F0CB66", Icon: Calendar,      skin: 4, hair: 2, hairStyle: "bun" },
   dirVentes:       { name: "Le développeur", role: "Directeur des ventes",    desc: "Fait grandir le chiffre d'affaires.",                                              color: "#4DBE88", Icon: Wallet,        skin: 2, hair: 0, hairStyle: "short" },
-  dirTourVentes:   { name: "Le coach",       role: "Pilote prospection",      desc: "Organise la prospection.",                                                         color: "#66CCA0", Icon: Map,           skin: 3, hair: 1, hairStyle: "curly" },
+  dirTourVentes:   { name: "Le coach",       role: "Pilote prospection",      desc: "Organise la prospection.",                                                         color: "#66CCA0", Icon: MapIcon,       skin: 3, hair: 1, hairStyle: "curly" },
   leadChecker:     { name: "L'éclaireur",    role: "Chasseur de leads",       desc: "Déniche les clients idéaux.",                                                      color: "#86D6AE", Icon: Target,        skin: 0, hair: 6, hairStyle: "long" },
   vendeur:         { name: "L'ambassadeur",  role: "Commercial",              desc: "Présente, négocie, conclut.",                                                      color: "#57B97C", Icon: Heart,         skin: 1, hair: 0, hairStyle: "buzz" },
   dirCom:          { name: "Le porte-voix",  role: "Directeur communication", desc: "Soigne l'image de marque.",                                                        color: "#EE9159", Icon: Megaphone,     skin: 4, hair: 3, hairStyle: "short" },
@@ -699,7 +699,7 @@ function deliverableHasImages(deliverable) {
 
 function buildLatestImageGallery(deliverables = []) {
   const items = Array.isArray(deliverables) ? deliverables : [];
-  const latestByMission = new Map();
+  const latestByMission = new globalThis.Map();
 
   items.forEach((deliverable) => {
     if (!deliverableHasImages(deliverable) || !deliverable?.missionId) return;
@@ -1510,7 +1510,7 @@ function MissionListItem({ mission, selected, onOpen, onAction, isProcessing }) 
             </div>
             <div style={{ fontSize: 11.5, color: agent.color, fontFamily: "Nunito, sans-serif", fontWeight: 700, marginBottom: 4 }}>{agent.name} · {agent.role}</div>
             <div style={{ fontSize: 12, color: "#9A93A8", fontFamily: "Nunito, sans-serif", lineHeight: 1.4 }}>
-              {mission.finalResponse ? "Livrable prêt" : isProcessing ? "Équipe au travail" : mission.latestResponse ? "En attente de validation" : "Livrable en attente"} · {new Date(mission.updatedAt).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+              {mission.finalResponse || mission.latestCompletedResponse ? "Livrable prêt" : isProcessing ? "Équipe au travail" : mission.latestResponse ? "En attente de validation" : "Livrable en attente"} · {new Date(mission.updatedAt).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
             </div>
           </div>
         </div>
@@ -1526,13 +1526,11 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
   const [openRelayId, setOpenRelayId] = useState(null);
   const messageRefs = useRef({});
   const containerRef = useRef(null);
-  const lastMissionMessage = mission.messages[mission.messages.length - 1] || null;
   const readyForReview = Boolean(
     !mission.archived &&
     !isProcessing &&
     actionableResponse &&
-    (actionableResponse.deliverable?.trim() || actionableResponse.assets?.length || actionableResponse.content?.trim()) &&
-    !["progress", "delegation", "command"].includes(lastMissionMessage?.type || "")
+    (actionableResponse.deliverable?.trim() || actionableResponse.assets?.length || actionableResponse.content?.trim())
   );
   const relays = mission.messages
     .filter((m) => m.type === "delegation")
