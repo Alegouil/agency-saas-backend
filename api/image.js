@@ -185,7 +185,7 @@ export default async function handler(req, res) {
         form.append("model", model);
         form.append("prompt", indexedPrompt);
         form.append("size", "1024x1024");
-        form.append("quality", "high");
+        form.append("quality", "medium");
         form.append("output_format", "png");
         form.append("input_fidelity", "high");
         referenceImages.forEach((image, imageIndex) => {
@@ -219,7 +219,7 @@ export default async function handler(req, res) {
             prompt: indexedPrompt,
             n: 1,
             size: "1024x1024",
-            quality: "high",
+            quality: "medium",
             output_format: "png",
           }),
         });
