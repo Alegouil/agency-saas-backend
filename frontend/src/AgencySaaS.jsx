@@ -19,6 +19,56 @@ const localStore = {
   },
 };
 
+function isPlainRecord(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeAssets(assets) {
+  if (!Array.isArray(assets)) return [];
+  return assets
+    .filter(isPlainRecord)
+    .map((asset, index) => ({
+      ...asset,
+      url: typeof asset.url === "string" ? asset.url : "",
+      alt: typeof asset.alt === "string" ? asset.alt : "",
+      index: Number.isFinite(asset.index) ? asset.index : index,
+    }))
+    .filter((asset) => asset.url);
+}
+
+function normalizeMessageRecord(message) {
+  if (!isPlainRecord(message)) return null;
+  return {
+    ...message,
+    ts: message?.ts ? new Date(message.ts) : new Date(),
+    assets: normalizeAssets(message.assets),
+    flags: Array.isArray(message.flags) ? message.flags.filter(Boolean) : [],
+    extractions: Array.isArray(message.extractions) ? message.extractions.filter(isPlainRecord) : [],
+  };
+}
+
+function normalizeDeliverableRecord(deliverable) {
+  if (!isPlainRecord(deliverable)) return null;
+  const content = typeof deliverable.content === "string" ? deliverable.content : String(deliverable.content || "");
+  const title = deliverable.title || extractDeliverableTitle(content, "Livrable");
+  const assets = normalizeAssets(deliverable.assets);
+  return {
+    ...deliverable,
+    missionId: typeof deliverable.missionId === "string" ? deliverable.missionId : null,
+    messageId: Number.isFinite(deliverable.messageId) ? deliverable.messageId : null,
+    agentId: typeof deliverable.agentId === "string" ? deliverable.agentId : "ceo",
+    title,
+    snippet: deliverable.snippet || buildSnippet(content, title),
+    content,
+    ts: deliverable?.ts ? new Date(deliverable.ts) : new Date(),
+    task: typeof deliverable.task === "string" ? deliverable.task : "",
+    imageUrl: typeof deliverable.imageUrl === "string" ? deliverable.imageUrl : "",
+    hasAssets: Boolean(deliverable.hasAssets || deliverable.assetCount || assets.length || deliverable.imageUrl),
+    assetCount: Number.isFinite(deliverable.assetCount) ? deliverable.assetCount : assets.length,
+    assets,
+  };
+}
+
 async function fetchRemoteState() {
   const response = await fetch(STORAGE_ENDPOINT);
   if (!response.ok) {
@@ -441,7 +491,9 @@ function RichText({ text, color = "#4A4658" }) {
 
 function buildMissionContext(messages, missionId) {
   if (!missionId) return "";
-  const scoped = messages.filter((m) => m.missionId === missionId).slice(-12);
+  const scoped = (Array.isArray(messages) ? messages : [])
+    .filter((m) => isPlainRecord(m) && m.missionId === missionId)
+    .slice(-12);
   if (!scoped.length) return "";
 
   return scoped.map((m) => {
@@ -574,25 +626,19 @@ function readFileAsDataUrl(file) {
 function normalizeWorkspacePayload(rawWorkspace = {}) {
   const rawMessages = Array.isArray(rawWorkspace.messages) ? rawWorkspace.messages : [];
   const rawKpis = rawWorkspace.kpis && typeof rawWorkspace.kpis === "object" ? rawWorkspace.kpis : {};
-  const rawDeliverables = Array.isArray(rawKpis.deliverables)
-    ? rawKpis.deliverables.filter((item) => item && typeof item === "object")
-    : [];
+  const rawDeliverables = Array.isArray(rawKpis.deliverables) ? rawKpis.deliverables : [];
 
   return {
-    messages: rawMessages.map((message) => ({
-      ...message,
-      ts: message?.ts ? new Date(message.ts) : new Date(),
-    })),
+    messages: rawMessages.map(normalizeMessageRecord).filter(Boolean),
     kpis: {
       ...DEFAULT_KPIS,
       ...rawKpis,
-      deliverables: rawDeliverables.map((d) => ({
-        ...d,
-        title: d?.title || extractDeliverableTitle(d?.content, "Livrable"),
-        snippet: d?.snippet || buildSnippet(d?.content, d?.title || extractDeliverableTitle(d?.content, "Livrable")),
-        ts: new Date(d?.ts),
-      })),
-      flags: Array.isArray(rawKpis.flags) ? rawKpis.flags.map((f) => ({ ...f, ts: new Date(f?.ts) })) : [],
+      deliverables: rawDeliverables.map(normalizeDeliverableRecord).filter(Boolean),
+      flags: Array.isArray(rawKpis.flags)
+        ? rawKpis.flags
+          .filter(isPlainRecord)
+          .map((f) => ({ ...f, ts: f?.ts ? new Date(f.ts) : new Date() }))
+        : [],
       activity: rawKpis.activity && typeof rawKpis.activity === "object" ? rawKpis.activity : {},
     },
     lastId: Number.isFinite(rawWorkspace.lastId) ? rawWorkspace.lastId : 0,
@@ -623,17 +669,19 @@ function resolveMissionTitle(command, finalResponse, latestResponse, archived) {
 function resolveDeliverableMissionId(messages, deliverable) {
   if (deliverable?.missionId) return deliverable.missionId;
 
-  const matchByContent = messages.find((message) => message.type === "response" && message.deliverable === deliverable?.content);
+  const safeMessages = Array.isArray(messages) ? messages.filter(isPlainRecord) : [];
+  const matchByContent = safeMessages.find((message) => message.type === "response" && message.deliverable === deliverable?.content);
   if (matchByContent?.missionId) return matchByContent.missionId;
 
-  const matchByTask = messages.find((message) => message.type === "response" && message.deliverable && deliverable?.task && message.deliverable.includes(deliverable.task.slice(0, 40)));
+  const matchByTask = safeMessages.find((message) => message.type === "response" && message.deliverable && deliverable?.task && message.deliverable.includes(deliverable.task.slice(0, 40)));
   return matchByTask?.missionId || null;
 }
 
 function resolveDeliverableMessageId(messages, deliverable) {
   if (deliverable?.messageId) return deliverable.messageId;
 
-  const matchByContent = messages.find((message) => message.type === "response" && message.deliverable === deliverable?.content);
+  const safeMessages = Array.isArray(messages) ? messages.filter(isPlainRecord) : [];
+  const matchByContent = safeMessages.find((message) => message.type === "response" && message.deliverable === deliverable?.content);
   return matchByContent?.id || null;
 }
 
@@ -724,15 +772,29 @@ async function maybeGenerateDesignerAssets(config, agentId, task, phase, respons
 }
 
 function summarizeMission(messages, missionId) {
-  const missionMessages = messages.filter((m) => m.missionId === missionId);
+  const missionMessages = (Array.isArray(messages) ? messages : []).filter((m) => isPlainRecord(m) && m.missionId === missionId);
   const command = missionMessages.find((m) => m.type === "command");
   const finalResponse = [...missionMessages].reverse().find((m) => m.type === "response" && m.phase === "final_validation");
   const latestResponse = [...missionMessages].reverse().find((m) => m.type === "response");
   const latestProgress = [...missionMessages].reverse().find((m) => m.type === "progress");
+  const latestDelegation = [...missionMessages].reverse().find((m) => m.type === "delegation");
   const lastLifecycle = [...missionMessages].reverse().find((m) => m.type === "mission_archived" || m.type === "mission_restored" || m.type === "mission_deleted");
   const archived = lastLifecycle?.type === "mission_archived";
   const deleted = lastLifecycle?.type === "mission_deleted";
-  const resolvedFinalResponse = finalResponse || (archived ? latestResponse : null);
+  const latestResponseTs = latestResponse ? new Date(latestResponse.ts || 0).getTime() : 0;
+  const latestProgressTs = latestProgress ? new Date(latestProgress.ts || 0).getTime() : 0;
+  const latestDelegationTs = latestDelegation ? new Date(latestDelegation.ts || 0).getTime() : 0;
+  const latestResponseHasOutput = Boolean(
+    latestResponse?.deliverable?.trim() ||
+    latestResponse?.assets?.length ||
+    latestResponse?.content?.trim()
+  );
+  const latestResponseLooksFinal = Boolean(
+    latestResponseHasOutput &&
+    latestResponseTs >= latestProgressTs &&
+    latestResponseTs >= latestDelegationTs
+  );
+  const resolvedFinalResponse = finalResponse || (latestResponseLooksFinal ? latestResponse : (archived ? latestResponse : null));
   const latestVisualResponse = [...missionMessages].reverse().find((m) => m.type === "response" && m.assets?.length);
   const relayPreview = !resolvedFinalResponse && latestResponse ? latestResponse : null;
 
@@ -750,13 +812,14 @@ function summarizeMission(messages, missionId) {
     latestProgress,
     archived,
     deleted,
-    hasFinalDeliverable: Boolean(resolvedFinalResponse?.deliverable?.trim() || resolvedFinalResponse?.content?.trim()),
+    hasFinalDeliverable: Boolean(resolvedFinalResponse?.deliverable?.trim() || resolvedFinalResponse?.assets?.length || resolvedFinalResponse?.content?.trim()),
     messages: missionMessages,
   };
 }
 
 function buildMissionList(messages) {
-  const ids = Array.from(new Set(messages.filter((m) => m.missionId).map((m) => m.missionId)));
+  const safeMessages = Array.isArray(messages) ? messages.filter((m) => isPlainRecord(m) && m.missionId) : [];
+  const ids = Array.from(new Set(safeMessages.map((m) => m.missionId)));
   return ids.map((id) => summarizeMission(messages, id)).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
 }
 
@@ -1452,10 +1515,19 @@ function MissionListItem({ mission, selected, onOpen, onAction, isProcessing }) 
 
 function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueMission, onAction, onArchive, onBack, onOpenAssets, isProcessing, focusMessageId }) {
   const finalResponse = mission.finalResponse || null;
+  const actionableResponse = finalResponse || mission.latestResponse || mission.latestVisualResponse || null;
   const relayPreview = mission.relayPreview;
   const [openRelayId, setOpenRelayId] = useState(null);
   const messageRefs = useRef({});
   const containerRef = useRef(null);
+  const lastMissionMessage = mission.messages[mission.messages.length - 1] || null;
+  const readyForReview = Boolean(
+    !mission.archived &&
+    !isProcessing &&
+    actionableResponse &&
+    (actionableResponse.deliverable?.trim() || actionableResponse.assets?.length || actionableResponse.content?.trim()) &&
+    !["progress", "delegation", "command"].includes(lastMissionMessage?.type || "")
+  );
   const relays = mission.messages
     .filter((m) => m.type === "delegation")
     .map((relay) => ({
@@ -1494,7 +1566,7 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
           </div>
         </div>
         <div style={{ marginBottom: mission.command ? 12 : 0 }}>
-          <MissionStatusPill active={isProcessing} label={mission.archived ? "Terminée" : finalResponse ? "Prête à valider" : isProcessing ? "En cours" : "En attente de validation"} />
+          <MissionStatusPill active={isProcessing} label={mission.archived ? "Terminée" : readyForReview ? "Prête à relire" : isProcessing ? "En cours" : "En attente"} />
         </div>
         {mission.command && (
           <div style={{ background: "#FBF6EE", borderRadius: 14, padding: "12px 14px" }}>
@@ -1534,11 +1606,11 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
         </div>
       )}
 
-      {finalResponse ? (
+      {actionableResponse ? (
         <div style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 13, color: "#A89A86", fontFamily: "Nunito, sans-serif", fontWeight: 700, marginBottom: 8 }}>Réponse finale</div>
-          <FeedMsg m={finalResponse} expanded={expanded} setExpanded={setExpanded} onValidate={onValidate} onContinueMission={onContinueMission} onAction={onAction} onOpenAssets={onOpenAssets} title="Livrable final" messageRef={(node) => { messageRefs.current[finalResponse.id] = node; }} />
-          {mission.latestVisualResponse && mission.latestVisualResponse.id !== finalResponse.id && (
+          <div style={{ fontSize: 13, color: "#A89A86", fontFamily: "Nunito, sans-serif", fontWeight: 700, marginBottom: 8 }}>{finalResponse ? "Réponse finale" : "Dernier livrable reçu"}</div>
+          <FeedMsg m={actionableResponse} expanded={expanded} setExpanded={setExpanded} onValidate={onValidate} onContinueMission={onContinueMission} onAction={onAction} onOpenAssets={onOpenAssets} title={finalResponse ? "Livrable final" : getResponseTitle(actionableResponse)} messageRef={(node) => { messageRefs.current[actionableResponse.id] = node; }} />
+          {mission.latestVisualResponse && mission.latestVisualResponse.id !== actionableResponse.id && (
             <div style={{ ...ST.card, padding: 14, marginTop: 12 }}>
               <div style={{ fontSize: 13, color: "#A89A86", fontFamily: "Nunito, sans-serif", fontWeight: 700, marginBottom: 8 }}>Visuels retenus</div>
               <AssetGallery assets={mission.latestVisualResponse.assets || []} onOpen={onOpenAssets} />
@@ -1557,9 +1629,9 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
       )}
 
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-        {!mission.archived && finalResponse && !isProcessing && (
+        {!mission.archived && readyForReview && (
           <>
-            <button onClick={() => onContinueMission(mission.finalResponse || mission.latestResponse || mission.command, { type: "full" })} style={{ flex: 1, padding: "11px 14px", borderRadius: 14, border: "1px solid #F2DDAE", background: "#FCF3E1", color: "#A76B00", fontSize: 13, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
+            <button onClick={() => onContinueMission(actionableResponse || mission.command, { type: "full" })} style={{ flex: 1, padding: "11px 14px", borderRadius: 14, border: "1px solid #F2DDAE", background: "#FCF3E1", color: "#A76B00", fontSize: 13, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
               Demander une revision
             </button>
             <button onClick={() => onArchive(mission.id)} style={{ flex: 1, padding: "11px 14px", borderRadius: 14, border: "none", background: "linear-gradient(135deg, #5BC77F, #42B76B)", color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
@@ -1567,9 +1639,9 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
             </button>
           </>
         )}
-        {!mission.archived && (!finalResponse || isProcessing) && (
+        {!mission.archived && !readyForReview && (
           <div style={{ flex: 1, padding: "11px 14px", borderRadius: 14, border: "1px solid #F0E8DB", background: "#F9F6F0", color: "#9A93A8", fontSize: 13, fontWeight: 700, fontFamily: "Nunito, sans-serif", textAlign: "center" }}>
-            Le livrable final doit etre termine avant validation ou revision.
+            Le livrable n'est pas encore pret pour une validation ou une revision.
           </div>
         )}
         {mission.archived && (
@@ -1829,12 +1901,16 @@ function ConfigScreen({ config, updateCompany, updateMetier, saved, decisions })
 
 function BilanScreen({ kpis, messages, activity, leaderboard, maxAct, onOpenMission }) {
   const safeKpis = kpis && typeof kpis === "object" ? kpis : DEFAULT_KPIS;
+  const safeMessages = Array.isArray(messages) ? messages.filter(isPlainRecord) : [];
   const deliverablesList = Array.isArray(safeKpis.deliverables)
-    ? safeKpis.deliverables.filter((item) => item && typeof item === "object")
+    ? safeKpis.deliverables.map(normalizeDeliverableRecord).filter(Boolean)
+    : [];
+  const safeLeaderboard = Array.isArray(leaderboard)
+    ? leaderboard.filter((entry) => Array.isArray(entry) && entry.length >= 2 && AGENTS[entry[0]])
     : [];
   const [deliverableFilter, setDeliverableFilter] = useState("content");
   const deliverables = [...deliverablesList].reverse();
-  const latestImageGallery = buildLatestImageGallery(deliverablesList);
+  const latestImageGallery = buildLatestImageGallery(deliverablesList).map(normalizeDeliverableRecord).filter(Boolean);
   const filteredDeliverables = deliverables.filter((d) => {
     if (deliverableFilter === "images") return deliverableHasImages(d);
     return !deliverableHasImages(d);
@@ -1859,13 +1935,13 @@ function BilanScreen({ kpis, messages, activity, leaderboard, maxAct, onOpenMiss
         ))}
       </div>
 
-      {leaderboard[0] && AGENTS[leaderboard[0][0]] && (
-        <div style={{ ...ST.card, padding: 15, marginBottom: 18, display: "flex", alignItems: "center", gap: 14, background: `linear-gradient(135deg, ${AGENTS[leaderboard[0][0]].color}15, #fff)` }}>
-          <Character id={leaderboard[0][0]} size={52} badge />
+      {safeLeaderboard[0] && AGENTS[safeLeaderboard[0][0]] && (
+        <div style={{ ...ST.card, padding: 15, marginBottom: 18, display: "flex", alignItems: "center", gap: 14, background: `linear-gradient(135deg, ${AGENTS[safeLeaderboard[0][0]].color}15, #fff)` }}>
+          <Character id={safeLeaderboard[0][0]} size={52} badge />
           <div>
             <div style={{ fontSize: 12, color: "#A89A86", fontFamily: "Nunito, sans-serif", fontWeight: 700 }}>Le plus impliqué</div>
-            <div style={{ fontSize: 17, fontWeight: 700, color: "#3D3A4E", fontFamily: "Fredoka, sans-serif" }}>{AGENTS[leaderboard[0][0]].name}</div>
-            <div style={{ fontSize: 12.5, color: "#9A93A8", fontFamily: "Nunito, sans-serif" }}>{leaderboard[0][1]} contribution{leaderboard[0][1] > 1 ? "s" : ""}</div>
+            <div style={{ fontSize: 17, fontWeight: 700, color: "#3D3A4E", fontFamily: "Fredoka, sans-serif" }}>{AGENTS[safeLeaderboard[0][0]].name}</div>
+            <div style={{ fontSize: 12.5, color: "#9A93A8", fontFamily: "Nunito, sans-serif" }}>{safeLeaderboard[0][1]} contribution{safeLeaderboard[0][1] > 1 ? "s" : ""}</div>
           </div>
         </div>
       )}
@@ -1885,8 +1961,8 @@ function BilanScreen({ kpis, messages, activity, leaderboard, maxAct, onOpenMiss
           </div>
           {deliverableFilter !== "images" && filteredDeliverables.map((d, i) => {
             const a = AGENTS[d.agentId] || { name: "Equipe", color: "#9A93A8" };
-            const missionId = resolveDeliverableMissionId(messages, d);
-            const messageId = resolveDeliverableMessageId(messages, d);
+            const missionId = resolveDeliverableMissionId(safeMessages, d);
+            const messageId = resolveDeliverableMessageId(safeMessages, d);
             const title = d.title || extractDeliverableTitle(d.content, "Livrable");
             const snippet = d.snippet || buildSnippet(d.content, title);
             return (
@@ -1922,8 +1998,8 @@ function BilanScreen({ kpis, messages, activity, leaderboard, maxAct, onOpenMiss
             latestImageGallery.length > 0 ? (
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 {latestImageGallery.map((d, i) => {
-                  const missionId = resolveDeliverableMissionId(messages, d);
-                  const messageId = resolveDeliverableMessageId(messages, d);
+                  const missionId = resolveDeliverableMissionId(safeMessages, d);
+                  const messageId = resolveDeliverableMessageId(safeMessages, d);
                   const title = d.title || extractDeliverableTitle(d.content, "Livrable");
                   const cover = d.assets?.[0]?.url || d.imageUrl || "";
                   if (!cover) return null;
