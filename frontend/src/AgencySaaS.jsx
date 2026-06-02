@@ -197,7 +197,7 @@ const METIERS = [
     id: "da", name: "Direction artistique", Icon: Palette, color: "#E879A6",
     agents: ["dirArt", "uiDesigner", "uxDesigner", "graphiste"],
     fields: [
-      { key: "logo", label: "Lien du logo", type: "text", placeholder: "https://…" },
+      { key: "logo", label: "Logos", type: "images", placeholder: "" },
       { key: "colors", label: "Couleurs de marque", type: "chips", placeholder: "#1A1A1A, #FF7A59…" },
       { key: "fonts", label: "Typographies", type: "chips", placeholder: "Fredoka, Nunito…" },
       { key: "dsm", label: "Design system complet (DSM)", type: "long", placeholder: "Principes, composants, espacements, do & don't…" },
@@ -562,6 +562,15 @@ function formatDateTime(value) {
   });
 }
 
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("File read failed"));
+    reader.readAsDataURL(file);
+  });
+}
+
 function getProgressLabel(agentId, phase) {
   const name = AGENTS[agentId]?.name || "L'équipe";
   if (phase === "strategy") return `Analyse de ${name} en cours`;
@@ -598,6 +607,10 @@ function resolveDeliverableMessageId(messages, deliverable) {
 
   const matchByContent = messages.find((message) => message.type === "response" && message.deliverable === deliverable?.content);
   return matchByContent?.id || null;
+}
+
+function deliverableHasImages(deliverable) {
+  return Boolean(deliverable?.hasAssets || deliverable?.assetCount || deliverable?.assets?.length || deliverable?.imageUrl);
 }
 
 function shouldGenerateDesignerImage(agentId, phase, task, response) {
@@ -853,7 +866,7 @@ function MissionStatusPill({ active, label }) {
   );
 }
 
-function AssetGallery({ assets = [], onOpen, onReviseAsset = null }) {
+function AssetGallery({ assets = [], onOpen }) {
   if (!assets.length) return null;
 
   const mainAsset = assets[0];
@@ -873,18 +886,11 @@ function AssetGallery({ assets = [], onOpen, onReviseAsset = null }) {
       {assets.length > 1 && (
         <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingTop: 8 }}>
           {assets.map((asset, index) => (
-            <div key={`${asset.url}-${index}`} style={{ flexShrink: 0 }}>
-              <button onClick={() => onOpen?.(assets, index)} style={{ border: "none", padding: 0, background: "transparent", cursor: "pointer", display: "block" }}>
-                <div style={{ width: 74, borderRadius: 14, overflow: "hidden", border: "1px solid #F0E8DB", background: "#fff" }}>
-                  <img src={asset.url} alt={asset.alt || "Miniature visuelle"} style={{ display: "block", width: "100%", aspectRatio: "1 / 1", objectFit: "cover" }} />
-                </div>
-              </button>
-              {onReviseAsset && (
-                <button onClick={() => onReviseAsset(asset, index)} style={{ marginTop: 6, width: 74, padding: "6px 0", borderRadius: 10, border: "1px solid #F2DDAE", background: "#FCF3E1", color: "#A76B00", fontSize: 11, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
-                  Faire V2
-                </button>
-              )}
-            </div>
+            <button key={`${asset.url}-${index}`} onClick={() => onOpen?.(assets, index)} style={{ border: "none", padding: 0, background: "transparent", cursor: "pointer", display: "block", flexShrink: 0 }}>
+              <div style={{ width: 74, borderRadius: 14, overflow: "hidden", border: "1px solid #F0E8DB", background: "#fff" }}>
+                <img src={asset.url} alt={asset.alt || "Miniature visuelle"} style={{ display: "block", width: "100%", aspectRatio: "1 / 1", objectFit: "cover" }} />
+              </div>
+            </button>
           ))}
         </div>
       )}
@@ -892,7 +898,7 @@ function AssetGallery({ assets = [], onOpen, onReviseAsset = null }) {
   );
 }
 
-function AssetLightbox({ group, onClose }) {
+function AssetLightbox({ group, onClose, onReviseAsset = null }) {
   const [index, setIndex] = useState(group?.index || 0);
   const startX = useRef(0);
 
@@ -917,7 +923,7 @@ function AssetLightbox({ group, onClose }) {
       <div style={{ position: "absolute", inset: 0, zIndex: 26, display: "flex", flexDirection: "column", justifyContent: "center", padding: "calc(env(safe-area-inset-top, 0px) + 20px) 16px calc(env(safe-area-inset-bottom, 0px) + 20px)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
           <div style={{ color: "#fff", fontFamily: "Fredoka, sans-serif", fontSize: 16, fontWeight: 600 }}>{asset.alt || "Visuel généré"}</div>
-          <button onClick={onClose} style={{ width: 38, height: 38, borderRadius: "50%", border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.08)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+          <button onClick={onClose} style={{ width: 38, height: 38, minWidth: 38, minHeight: 38, borderRadius: "999px", border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.08)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", aspectRatio: "1 / 1" }}>
             <X size={18} />
           </button>
         </div>
@@ -949,6 +955,13 @@ function AssetLightbox({ group, onClose }) {
                 <span style={{ display: "block", width: itemIndex === index ? 24 : 8, height: 8, borderRadius: 999, background: itemIndex === index ? "#fff" : "rgba(255,255,255,0.35)", transition: "all 0.2s ease" }} />
               </button>
             ))}
+          </div>
+        )}
+        {onReviseAsset && (
+          <div style={{ display: "flex", justifyContent: "center", marginTop: 14 }}>
+            <button onClick={() => onReviseAsset(asset, index)} style={{ padding: "10px 16px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.28)", background: "rgba(255,255,255,0.12)", color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
+              Modifier ce visuel
+            </button>
           </div>
         )}
       </div>
@@ -1063,6 +1076,47 @@ function OffersField({ label, items = [], onChange, color = "#4DBE88" }) {
 }
 
 function Field({ field, value, onChange, color }) {
+  if (field.type === "images") {
+    const items = Array.isArray(value) ? value : [];
+    return (
+      <div style={{ marginBottom: 12 }}>
+        {field.label && <span style={ST.label}>{field.label}</span>}
+        <label style={{ display: "block", width: "100%", padding: "12px 14px", borderRadius: 14, border: `1.5px dashed ${color}66`, background: `${color}0F`, color, fontFamily: "Nunito, sans-serif", fontWeight: 700, fontSize: 13.5, cursor: "pointer", textAlign: "center" }}>
+          Importer une ou plusieurs images
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            style={{ display: "none" }}
+            onChange={async (event) => {
+              const files = Array.from(event.target.files || []);
+              if (!files.length) return;
+              const next = await Promise.all(files.map(async (file) => ({
+                name: file.name,
+                url: await readFileAsDataUrl(file),
+              })));
+              onChange([...(items || []), ...next]);
+              event.target.value = "";
+            }}
+          />
+        </label>
+        {items.length > 0 && (
+          <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingTop: 10 }}>
+            {items.map((item, index) => (
+              <div key={`${item.url}-${index}`} style={{ flexShrink: 0 }}>
+                <div style={{ width: 88, borderRadius: 14, overflow: "hidden", border: "1px solid #F0E8DB", background: "#fff", marginBottom: 6 }}>
+                  <img src={item.url} alt={item.name || `Logo ${index + 1}`} style={{ display: "block", width: "100%", aspectRatio: "1 / 1", objectFit: "cover" }} />
+                </div>
+                <button onClick={() => onChange(items.filter((_, itemIndex) => itemIndex !== index))} style={{ width: 88, padding: "6px 0", borderRadius: 10, border: "1px solid #F0DDD8", background: "#FFF1EE", color: "#E0654E", fontSize: 11, fontWeight: 800, fontFamily: "Nunito, sans-serif", cursor: "pointer" }}>
+                  Retirer
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
   if (field.type === "chips") return <ChipsField label={field.label} items={value} onChange={onChange} color={color} placeholder={field.placeholder} />;
   if (field.type === "offers") return <OffersField label={field.label} items={value} onChange={onChange} color={color} />;
   return <TextField label={field.label} value={value} onChange={onChange} placeholder={field.placeholder} multiline={field.type === "long"} rows={4} />;
@@ -1197,7 +1251,7 @@ function FeedMsg({ m, expanded, setExpanded, onValidate, onContinueMission, onAc
             </button>
           </div>
         )}
-        {!compact && <AssetGallery assets={m.assets || []} onOpen={onOpenAssets} onReviseAsset={(asset, index) => onContinueMission?.(m, { type: "image", assetIndex: index, asset })} />}
+        {!compact && <AssetGallery assets={m.assets || []} onOpen={onOpenAssets} />}
       </div>
     </div>
   );
@@ -1418,7 +1472,7 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
           {mission.latestVisualResponse && mission.latestVisualResponse.id !== finalResponse.id && (
             <div style={{ ...ST.card, padding: 14, marginTop: 12 }}>
               <div style={{ fontSize: 13, color: "#A89A86", fontFamily: "Nunito, sans-serif", fontWeight: 700, marginBottom: 8 }}>Visuels retenus</div>
-              <AssetGallery assets={mission.latestVisualResponse.assets || []} onOpen={onOpenAssets} onReviseAsset={(asset, index) => onContinueMission(mission.latestVisualResponse, { type: "image", assetIndex: index, asset })} />
+              <AssetGallery assets={mission.latestVisualResponse.assets || []} onOpen={onOpenAssets} />
             </div>
           )}
         </div>
@@ -1430,9 +1484,6 @@ function MissionDetail({ mission, expanded, setExpanded, onValidate, onContinueM
               <FeedMsg m={relayPreview} expanded={expanded} setExpanded={setExpanded} onValidate={onValidate} onContinueMission={onContinueMission} onAction={onAction} onOpenAssets={onOpenAssets} title={getResponseTitle(relayPreview)} muted={isProcessing} messageRef={(node) => { messageRefs.current[relayPreview.id] = node; }} />
             </div>
           )}
-          <div style={{ ...ST.card, padding: 16, marginBottom: 12, fontSize: 13.5, color: "#9A93A8", fontFamily: "Nunito, sans-serif" }}>
-            {isProcessing ? "Le livrable final n'est pas encore validé par le responsable de mission." : "L'équipe a terminé son travail. Il reste à produire ou valider le livrable final du responsable de mission."}
-          </div>
         </>
       )}
 
@@ -1706,8 +1757,8 @@ function BilanScreen({ kpis, messages, activity, leaderboard, maxAct, onOpenMiss
   const [deliverableFilter, setDeliverableFilter] = useState("all");
   const deliverables = [...(kpis.deliverables || [])].reverse();
   const filteredDeliverables = deliverables.filter((d) => {
-    if (deliverableFilter === "content") return !d.hasAssets;
-    if (deliverableFilter === "images") return d.hasAssets;
+    if (deliverableFilter === "content") return !deliverableHasImages(d);
+    if (deliverableFilter === "images") return deliverableHasImages(d);
     return true;
   });
 
@@ -1770,9 +1821,9 @@ function BilanScreen({ kpis, messages, activity, leaderboard, maxAct, onOpenMiss
                 </div>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 9 }}>
                   <span style={{ fontSize: 10.5, color: "#7A7488", background: "#F7F1E6", borderRadius: 999, padding: "3px 8px", fontFamily: "Nunito, sans-serif", fontWeight: 800 }}>
-                    {d.hasAssets ? "Images" : "Contenu"}
+                    {deliverableHasImages(d) ? "Images" : "Contenu"}
                   </span>
-                  {d.hasAssets && d.assetCount > 1 && (
+                  {deliverableHasImages(d) && d.assetCount > 1 && (
                     <span style={{ fontSize: 10.5, color: "#F2785C", background: "#FFF1EC", borderRadius: 999, padding: "3px 8px", fontFamily: "Nunito, sans-serif", fontWeight: 800 }}>
                       {d.assetCount} visuels
                     </span>
@@ -2265,7 +2316,12 @@ export default function AgencySaaS() {
         setConfirmDialog(null);
         performMissionAction(missionId, action);
       }} />
-      <AssetLightbox group={lightbox} onClose={() => setLightbox(null)} />
+      <AssetLightbox group={lightbox} onClose={() => setLightbox(null)} onReviseAsset={(asset, index) => {
+        const sourceMessage = messages.find((message) => message.type === "response" && (message.assets || []).some((item) => item.url === asset.url)) || null;
+        if (!sourceMessage) return;
+        setLightbox(null);
+        handleContinueMission(sourceMessage, { type: "image", assetIndex: index, asset });
+      }} />
     </div>
   );
 }
